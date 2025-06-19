@@ -159,31 +159,39 @@ void logIndexFlatFull(const faiss::IndexFlat* index, const std::string& prefix =
     }
 }
 
-jlong IndexService::buildFlatIndexFromVectors(
+jlong IndexService::buildFlatIndexFromNativeAddress(
     int numVectors,
     int dim,
-    const std::vector<float> &vectors,
-    faiss::MetricType metricType) {
-
-    if (vectors.empty()) {
-        throw std::runtime_error("Input vectors cannot be empty");
+    const float *vectors,
+    faiss::MetricType metricType
+) {
+    if (vectors == nullptr) {
+        throw std::runtime_error("Input vectors cannot be null");
+    }
+    if (numVectors <= 0 || dim <= 0) {
+        throw std::runtime_error("Invalid numVectors or dim");
     }
 
-    if ((int)vectors.size() != numVectors * dim) {
-        throw std::runtime_error("Mismatch between vector count/dimension and actual data length");
+    std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+    // Log vectors before adding to index
+    for (int i = 0; i < numVectors; ++i) {
+        log << "Before add: vector[" << i << "]: [";
+        for (int j = 0; j < dim; ++j) {
+            log << std::setprecision(6) << vectors[i * dim + j];
+            if (j < dim - 1) log << ", ";
+        }
+        log << "]" << std::endl;
     }
 
     faiss::IndexFlat *index = nullptr;
-
     if (metricType == faiss::METRIC_INNER_PRODUCT) {
         index = new faiss::IndexFlatIP(dim);
     } else {
         index = new faiss::IndexFlatL2(dim);
     }
+    index->add(numVectors, vectors);
 
-    index->add(numVectors, vectors.data());
-
-    // Debug: dump
+    // Log vectors after adding to index
     logIndexFlatFull(index, "After add: ");
 
     return reinterpret_cast<jlong>(index);

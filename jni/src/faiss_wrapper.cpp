@@ -32,6 +32,9 @@
 #include <string>
 #include <vector>
 
+#include <fstream>
+#include <iomanip>
+
 // Defines type of IDSelector
 enum FilterIdsSelectorType{
     BITMAP = 0, BATCH = 1,
@@ -183,36 +186,54 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
     indexService->insertToIndex(dim, numIds, threadCount, vectorsAddress, ids, index_ptr);
 }
 
-jlong knn_jni::faiss_wrapper::BuildFlatIndexFromVectors(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jfloatArray vectorsJ, jint numVectors,
-                                                                            jint dimJ, jstring metricTypeJ, IndexService *indexService) {
+jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+    knn_jni::JNIUtilInterface *jniUtil,
+    JNIEnv *env,
+    jlong vectorAddress,
+    jint numVectors,
+    jint dimJ,
+    jstring metricTypeJ,
+    knn_jni::faiss_wrapper::IndexService *indexService
+) {
+    std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+    log << "[Wrapper] BuildFlatIndexFromNativeAddress called with: "
+        << "vectorAddress=" << vectorAddress
+        << ", numVectors=" << numVectors
+        << ", dimJ=" << dimJ
+        << std::endl;
 
-    if (vectorsJ == nullptr) {
-            throw std::runtime_error("Vector data cannot be null");
+    if (vectorAddress <= 0) {
+        log << "[Wrapper] ERROR: Input vector address cannot be null!" << std::endl;
+        throw std::runtime_error("Input vector address cannot be null");
+    }
+    if (dimJ <= 0 || numVectors <= 0) {
+        log << "[Wrapper] ERROR: Invalid dimensions or number of vectors!" << std::endl;
+        throw std::runtime_error("Invalid dimensions or number of vectors");
+    }
+
+    const char *metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
+
+    faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
+    log << "[Wrapper] metricTypeC = " << metricTypeC << ", metric enum = " << (int)metric << std::endl;
+    env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
+
+    float* vectors = reinterpret_cast<float*>(vectorAddress);
+
+    // --- PRINT ACTUAL VECTOR VALUES ---
+    int dump_count = std::min((int)numVectors, 5); // Print up to 5 vectors
+    for (int i = 0; i < dump_count; ++i) {
+        log << "[Wrapper] vector[" << i << "]: [";
+        for (int j = 0; j < dimJ; ++j) {
+            if (j != 0) log << ", ";
+            log << std::setprecision(6) << vectors[i * dimJ + j];
         }
+        log << "]" << std::endl;
+    }
 
-        if (dimJ <= 0 || numVectors <= 0) {
-            throw std::runtime_error("Invalid dimensions or number of vectors");
-        }
+    // Delegate to IndexService
+    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, vectors, metric);
 
-        const char *metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
-        jsize totalLength = env->GetArrayLength(vectorsJ);
-
-        if (totalLength != numVectors * dimJ) {
-            env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
-            throw std::runtime_error("Vector data length does not match numVectors * dimension");
-        }
-
-        jfloat* vectors = env->GetFloatArrayElements(vectorsJ, nullptr);
-        std::vector<float> cppVectors(vectors, vectors + totalLength);
-
-        faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
-
-        jlong indexPtr = indexService->buildFlatIndexFromVectors(numVectors, dimJ, cppVectors, metric);
-
-        env->ReleaseFloatArrayElements(vectorsJ, vectors, JNI_ABORT);
-        env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
-
-        return indexPtr;
+    return indexPtr;
 }
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,

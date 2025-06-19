@@ -103,16 +103,7 @@ class FaissService {
      */
     public static native void insertToIndex(int[] ids, long vectorsAddress, int dim, long indexAddress, int threadCount);
 
-    /**
-     * Builds a FAISS IndexFlat index from vectors.
-     *
-     * @param vectors vector data
-     * @param numVectors number of vectors
-     * @param dimension dimension of the vectors
-     * @param metricType either "L2" or "IP"
-     * @return pointer to the native IndexFlat object
-     */
-    public static native long buildFlatIndexFromVectors(float[] vectors, int numVectors, int dimension, String metricType);
+    public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
 
     /**
      * Inserts to a faiss index. The memory occupied by the vectorsAddress will be freed up during the

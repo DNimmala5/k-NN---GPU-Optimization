@@ -37,6 +37,9 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.io.FileWriter;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
+import org.opensearch.knn.index.VectorDataType;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -232,47 +235,69 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         }
     }
 
+    private String previewVector(Object vector, int dimension) {
+        if (vector == null) return "null";
+        int maxPrint = Math.min(8, dimension);
+        StringBuilder sb = new StringBuilder();
+        if (vector instanceof float[]) {
+            float[] arr = (float[]) vector;
+            sb.append("[");
+            for (int i = 0; i < maxPrint; i++) {
+                sb.append(arr[i]);
+                if (i < maxPrint - 1) sb.append(", ");
+            }
+            if (dimension > maxPrint) sb.append(", ...");
+            sb.append("]");
+            return "float[" + dimension + "] " + sb;
+        } else if (vector instanceof byte[]) {
+            byte[] arr = (byte[]) vector;
+            sb.append("[");
+            for (int i = 0; i < maxPrint; i++) {
+                sb.append(arr[i]);
+                if (i < maxPrint - 1) sb.append(", ");
+            }
+            if (dimension > maxPrint) sb.append(", ...");
+            sb.append("]");
+            return "byte[" + dimension + "] " + sb;
+        } else {
+            return vector.getClass().getSimpleName() + " (not float[] or byte[])";
+        }
+    }
+
     private void buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
         KNNVectorValues<?> knnVectorValues = indexInfo.getKnnVectorValuesSupplier().get();
         int totalDocs = indexInfo.getTotalLiveDocs();
-        Object firstVector = null;
-        int dimension;
-        int idx = 0;
-        float[] vectorData;
+        VectorDataType vectorDataType = indexInfo.getVectorDataType();
 
+        int idx = 0;
         if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
             throw new IllegalStateException("No vectors to index");
         }
+        float[] firstVector = (float[]) knnVectorValues.getVector();
 
-        // First vector
-        firstVector = knnVectorValues.getVector();
-        if (firstVector instanceof float[] v) {
-            dimension = v.length;
-            vectorData = new float[totalDocs * dimension];
-            System.arraycopy(v, 0, vectorData, 0, dimension);
-        } else if (firstVector instanceof byte[] v) {
-            dimension = v.length;
-            vectorData = new float[totalDocs * dimension];
-            for (int i = 0; i < dimension; i++) {
-                vectorData[i] = v[i];
-            }
-        } else {
-            throw new IllegalArgumentException("Unknown vector type: " + firstVector.getClass());
-        }
-        idx = 1;
+        int bytesPerVector = knnVectorValues.bytesPerVector();
+        int dimension = knnVectorValues.dimension();
 
-        // Rest of the vectors
+        OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
+            vectorDataType,
+            bytesPerVector,
+            totalDocs
+        );
+
+        // Print first vector
+        debugLog("About to transfer vector idx=" + idx + ": " + previewVector(firstVector, dimension));
+        vectorTransfer.transfer(firstVector, true);
+        idx++;
+
         while (knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
-            Object vec = knnVectorValues.getVector();
-            if (vec instanceof float[] v) {
-                System.arraycopy(v, 0, vectorData, idx * dimension, dimension);
-            } else if (vec instanceof byte[] v) {
-                for (int i = 0; i < dimension; i++) {
-                    vectorData[idx * dimension + i] = v[i];
-                }
-            }
+            float[] vector = (float[]) knnVectorValues.getVector();
+            if (vector == null) break;
+            debugLog("About to transfer vector idx=" + idx + ": " + previewVector(vector, dimension));
+            vectorTransfer.transfer(vector, true);  // stream to off-heap
             idx++;
         }
+
+        vectorTransfer.flush(true); // flush any remaining batch
 
         debugLog("Collected " + idx + " vectors after remote build.");
 
@@ -283,9 +308,13 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         }
         debugLog("Metric type for FAISS IndexFlat: " + metricType);
 
-        long indexPtr = JNIService.buildFlatIndexFromVectors(vectorData, idx, dimension, metricType);
+        long vectorAddress = vectorTransfer.getVectorAddress();
+        debugLog("vectorTransfer address: " + vectorAddress);
+        long indexPtr = JNIService.buildFlatIndexFromNativeAddress(vectorAddress, idx, dimension, metricType);
         debugLog("Native FAISS IndexFlat pointer returned: " + indexPtr);
         JNIService.free(indexPtr, KNNEngine.FAISS);
+
+        vectorTransfer.close();
     }
 
     /**

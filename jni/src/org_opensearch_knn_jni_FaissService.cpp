@@ -19,7 +19,9 @@
 #include "jni_util.h"
 #include "faiss_stream_support.h"
 
-
+#include <fstream>
+#include <iomanip>
+#include <algorithm>
 
 static knn_jni::JNIUtil jniUtil;
 static const jint KNN_FAISS_JNI_VERSION = JNI_VERSION_1_1;
@@ -98,17 +100,44 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JN
     }
 }
 
-JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexFromVectors(
-    JNIEnv *env, jclass cls, jfloatArray vectorsJ, jint numVectors, jint dimJ, jstring metricTypeJ) {
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexFromNativeAddress(
+    JNIEnv *env, jclass cls, jlong vectorAddress, jint numVectors, jint dimJ, jstring metricTypeJ)
+{
+    // Debug: print incoming arguments
+    {
+        std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+        log << "[JNI] buildFlatIndexFromNativeAddress called with: "
+            << "vectorAddress=" << vectorAddress
+            << ", numVectors=" << numVectors
+            << ", dimJ=" << dimJ
+            << std::endl;
+        // Print the actual vector values (first up to 5 vectors)
+        if (vectorAddress > 0 && numVectors > 0 && dimJ > 0) {
+            float* vectors = reinterpret_cast<float*>(vectorAddress);
+            int dump_count = std::min((int)numVectors, 5);
+            for (int i = 0; i < dump_count; ++i) {
+                log << "[JNI] vector[" << i << "]: [";
+                for (int j = 0; j < dimJ; ++j) {
+                    if (j != 0) log << ", ";
+                    log << std::setprecision(6) << vectors[i * dimJ + j];
+                }
+                log << "]" << std::endl;
+            }
+        } else {
+            log << "[JNI] Skipping vector value print due to bad address or size." << std::endl;
+        }
+    }
+
     try {
         std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
         knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
-        return knn_jni::faiss_wrapper::BuildFlatIndexFromVectors(&jniUtil, env, vectorsJ, numVectors, dimJ, metricTypeJ, &indexService);
+        return knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+            &jniUtil, env, vectorAddress, numVectors, dimJ, metricTypeJ, &indexService
+        );
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }
-
-    return -1;
+    return (jlong)0;
 }
 
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToBinaryIndex(JNIEnv * env, jclass cls, jintArray idsJ,
