@@ -217,7 +217,7 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     log << "[Wrapper] metricTypeC = " << metricTypeC << ", metric enum = " << (int)metric << std::endl;
     env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
 
-    float* vectors = reinterpret_cast<float*>(vectorAddress);
+    const float* inputVectors = reinterpret_cast<const float*>(vectorAddress);
 
     // --- PRINT ACTUAL VECTOR VALUES ---
     int dump_count = std::min((int)numVectors, 5); // Print up to 5 vectors
@@ -225,13 +225,12 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
         log << "[Wrapper] vector[" << i << "]: [";
         for (int j = 0; j < dimJ; ++j) {
             if (j != 0) log << ", ";
-            log << std::setprecision(6) << vectors[i * dimJ + j];
+            log << std::setprecision(6) << inputVectors[i * dimJ + j];
         }
         log << "]" << std::endl;
     }
 
-    // Delegate to IndexService
-    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, vectors, metric);
+    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
 
     return indexPtr;
 }

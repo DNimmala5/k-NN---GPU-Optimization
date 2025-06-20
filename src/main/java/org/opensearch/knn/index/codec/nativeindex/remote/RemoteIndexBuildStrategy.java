@@ -269,14 +269,14 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         int totalDocs = indexInfo.getTotalLiveDocs();
         VectorDataType vectorDataType = indexInfo.getVectorDataType();
 
-        int idx = 0;
+        // Advance to first valid doc
         if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
             throw new IllegalStateException("No vectors to index");
         }
         float[] firstVector = (float[]) knnVectorValues.getVector();
-
-        int bytesPerVector = knnVectorValues.bytesPerVector();
         int dimension = knnVectorValues.dimension();
+        int bytesPerVector = knnVectorValues.bytesPerVector();
+        KNNEngine engine = indexInfo.getKnnEngine();
 
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
             vectorDataType,
@@ -284,35 +284,41 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             totalDocs
         );
 
-        // Print first vector
-        debugLog("About to transfer vector idx=" + idx + ": " + previewVector(firstVector, dimension));
-        vectorTransfer.transfer(firstVector, true);
-        idx++;
+        int idx = 0;
+        int batchSize = 0;
 
+        // Process the first vector
+        boolean transferred = vectorTransfer.transfer(firstVector, false);
+        idx++;
+        batchSize++;
+
+        // Iterate through the rest
         while (knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
             float[] vector = (float[]) knnVectorValues.getVector();
-            if (vector == null) break;
-            debugLog("About to transfer vector idx=" + idx + ": " + previewVector(vector, dimension));
-            vectorTransfer.transfer(vector, true);  // stream to off-heap
+            transferred = vectorTransfer.transfer(vector, false);
             idx++;
+            batchSize++;
+
+            if (transferred) {
+                long address = vectorTransfer.getVectorAddress();
+                debugLog("Flushing batch with " + batchSize + " vectors, address=" + address);
+
+                long indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+                debugLog("Returned index ptr: " + indexPtr);
+                JNIService.free(indexPtr, engine);
+
+                batchSize = 0;
+            }
         }
 
-        vectorTransfer.flush(true); // flush any remaining batch
+        if (vectorTransfer.flush(false)) {
+            long address = vectorTransfer.getVectorAddress();
+            debugLog("Flushing final batch with " + batchSize + " vectors, address=" + address);
 
-        debugLog("Collected " + idx + " vectors after remote build.");
-
-        String metricType = "L2";
-        Object spaceType = indexInfo.getParameters().get("space_type");
-        if (spaceType != null && spaceType.toString().toUpperCase().contains("IP")) {
-            metricType = "IP";
+            long indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+            debugLog("Returned index ptr: " + indexPtr);
+            JNIService.free(indexPtr, engine);
         }
-        debugLog("Metric type for FAISS IndexFlat: " + metricType);
-
-        long vectorAddress = vectorTransfer.getVectorAddress();
-        debugLog("vectorTransfer address: " + vectorAddress);
-        long indexPtr = JNIService.buildFlatIndexFromNativeAddress(vectorAddress, idx, dimension, metricType);
-        debugLog("Native FAISS IndexFlat pointer returned: " + indexPtr);
-        JNIService.free(indexPtr, KNNEngine.FAISS);
 
         vectorTransfer.close();
     }
