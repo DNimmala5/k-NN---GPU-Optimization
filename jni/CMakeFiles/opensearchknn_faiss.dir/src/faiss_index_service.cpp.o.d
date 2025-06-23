@@ -263,4 +263,15 @@ CMakeFiles/opensearchknn_faiss.dir/src/faiss_index_service.cpp.o: \
  /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexBinaryFlat.h \
  /home/ec2-user/k-NN/jni/external/faiss/faiss/utils/approx_topk/mode.h \
  /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexIVFFlat.h \
- /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexBinaryIVF.h
+ /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexBinaryIVF.h \
+ /usr/include/c++/11/fstream /usr/include/c++/11/bits/codecvt.h \
+ /usr/include/c++/11/x86_64-amazon-linux/bits/basic_file.h \
+ /usr/include/c++/11/x86_64-amazon-linux/bits/c++io.h \
+ /usr/include/c++/11/bits/fstream.tcc /usr/include/c++/11/iomanip \
+ /usr/include/c++/11/locale \
+ /usr/include/c++/11/bits/locale_facets_nonio.h \
+ /usr/include/c++/11/x86_64-amazon-linux/bits/time_members.h \
+ /usr/include/c++/11/x86_64-amazon-linux/bits/messages_members.h \
+ /usr/include/libintl.h /usr/include/c++/11/bits/locale_facets_nonio.tcc \
+ /usr/include/c++/11/bits/locale_conv.h \
+ /usr/include/c++/11/bits/quoted_string.h

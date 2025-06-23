@@ -183,18 +183,4 @@ CMakeFiles/opensearchknn_faiss.dir/src/org_opensearch_knn_jni_FaissService.cpp.o
  /usr/include/c++/11/pstl/glue_memory_defs.h \
  /usr/include/c++/11/pstl/execution_defs.h \
  /home/ec2-user/k-NN/jni/include/jni_util.h \
- /home/ec2-user/k-NN/jni/include/faiss_stream_support.h \
- /usr/include/c++/11/fstream /usr/include/c++/11/bits/codecvt.h \
- /usr/include/c++/11/x86_64-amazon-linux/bits/basic_file.h \
- /usr/include/c++/11/x86_64-amazon-linux/bits/c++io.h \
- /usr/include/c++/11/bits/fstream.tcc /usr/include/c++/11/iomanip \
- /usr/include/c++/11/locale \
- /usr/include/c++/11/bits/locale_facets_nonio.h /usr/include/c++/11/ctime \
- /usr/include/c++/11/x86_64-amazon-linux/bits/time_members.h \
- /usr/include/c++/11/x86_64-amazon-linux/bits/messages_members.h \
- /usr/include/libintl.h /usr/include/c++/11/bits/locale_facets_nonio.tcc \
- /usr/include/c++/11/bits/locale_conv.h \
- /usr/include/c++/11/bits/quoted_string.h \
- /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexFlat.h \
- /home/ec2-user/k-NN/jni/external/faiss/faiss/IndexFlatCodes.h \
- /home/ec2-user/k-NN/jni/external/faiss/faiss/impl/DistanceComputer.h
+ /home/ec2-user/k-NN/jni/include/faiss_stream_support.h
