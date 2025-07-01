@@ -187,13 +187,13 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
 }
 
 jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
-    knn_jni::JNIUtilInterface *jniUtil,
-    JNIEnv *env,
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
     jlong vectorAddress,
     jint numVectors,
     jint dimJ,
     jstring metricTypeJ,
-    knn_jni::faiss_wrapper::IndexService *indexService
+    knn_jni::faiss_wrapper::IndexService* indexService
 ) {
     std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
     log << "[Wrapper] BuildFlatIndexFromNativeAddress called with: "
@@ -202,6 +202,7 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
         << ", dimJ=" << dimJ
         << std::endl;
 
+    // Safety checks
     if (vectorAddress <= 0) {
         log << "[Wrapper] ERROR: Input vector address cannot be null!" << std::endl;
         throw std::runtime_error("Input vector address cannot be null");
@@ -211,29 +212,32 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
         throw std::runtime_error("Invalid dimensions or number of vectors");
     }
 
-    const char *metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
-
+    // Convert metric type
+    const char* metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
     faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
-    log << "[Wrapper] metricTypeC = " << metricTypeC << ", metric enum = " << (int)metric << std::endl;
+    log << "[Wrapper] metricTypeC = " << metricTypeC << ", metric enum = " << static_cast<int>(metric) << std::endl;
     env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
 
-    const float* inputVectors = reinterpret_cast<const float*>(vectorAddress);
+    // Cast the address to vector<float>* and extract raw data
+    std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
+    const float* inputVectors = vectorPtr->data();
 
-    // --- PRINT ACTUAL VECTOR VALUES ---
-    int dump_count = std::min((int)numVectors, 5); // Print up to 5 vectors
+    // Dump up to 5 vectors for debug
+    int dump_count = std::min(static_cast<int>(numVectors), 5);
     for (int i = 0; i < dump_count; ++i) {
         log << "[Wrapper] vector[" << i << "]: [";
         for (int j = 0; j < dimJ; ++j) {
-            if (j != 0) log << ", ";
-            log << std::setprecision(6) << inputVectors[i * dimJ + j];
+            if (j > 0) log << ", ";
+            log << std::fixed << std::setprecision(6) << inputVectors[i * dimJ + j];
         }
         log << "]" << std::endl;
     }
 
+    // Build and return the index
     jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
-
     return indexPtr;
 }
+
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {
