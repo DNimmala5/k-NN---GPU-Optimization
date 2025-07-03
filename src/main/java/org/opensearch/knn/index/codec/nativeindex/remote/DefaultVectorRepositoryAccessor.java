@@ -30,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 
 import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorValues;
@@ -230,7 +231,7 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
     }
 
     @Override
-    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer) throws IOException {
+    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException {
         if (StringUtils.isBlank(fileName)) {
             throw new IllegalArgumentException("download path is null or empty");
         }
@@ -239,22 +240,25 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
             throw new IllegalArgumentException("download path has incorrect file extension");
         }
 
-        // TODO: We are using the sequential download API as multi-part parallel download is difficult for us to implement today and
-        // requires some changes in core. For more details, see: https://github.com/opensearch-project/k-NN/issues/2464
-        InputStream graphStream = blobContainer.readBlob(fileName);
-
+        // Read the FAISS index file from the blob container
         byte[] faissData;
-        try (ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+        try (InputStream originalStream = blobContainer.readBlob(fileName); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             byte[] tmp = new byte[8192];
             int n;
-            while ((n = graphStream.read(tmp)) != -1) {
+            while ((n = originalStream.read(tmp)) != -1) {
                 buffer.write(tmp, 0, n);
             }
             faissData = buffer.toByteArray();
         }
 
-        JNIService.indexReconstruct(faissData);
-
-        indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        // Call the JNI to reconstruct and get the updated FAISS index as a byte array
+        byte[] reconstructedFaiss = JNIService.indexReconstruct(faissData, indexPtr);
+        if (reconstructedFaiss == null || reconstructedFaiss.length == 0) {
+            throw new IOException("JNI reconstruct returned empty index data");
+        }
+        // Wrap the reconstructed byte array as an InputStream
+        try (InputStream graphStream = new ByteArrayInputStream(reconstructedFaiss)) {
+            indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        }
     }
 }

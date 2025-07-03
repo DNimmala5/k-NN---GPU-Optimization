@@ -28,6 +28,7 @@
 #include "faiss/IndexBinaryHNSW.h"
 #include <faiss/index_io.h>
 #include <faiss/impl/io.h>
+//#include <faiss/IndexHNSWCagra.h>
 
 #include <algorithm>
 #include <jni.h>
@@ -240,36 +241,42 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
-void knn_jni::faiss_wrapper::IndexReconstruct(const uint8_t* data, size_t size) {
-    // Use FAISS's in-memory index loader:
-    try {
-        std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
-        faiss::VectorIOReader reader;
-        reader.data = std::vector<uint8_t>(data, data + size);
-        faiss::Index* index = faiss::read_index(&reader);
-        log << "Loaded FAISS index from in-memory buffer" << std::endl;
-        log << "d (dim): " << index->d << std::endl;
-        log << "ntotal (vectors): " << index->ntotal << std::endl;
-        log << "is_trained: " << index->is_trained << std::endl;
+std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(const uint8_t* data, size_t size, int64_t indexPtr) {
+    std::vector<uint8_t> out;
+        try {
+            // Load IndexHNSWCagra from memory buffer
+            faiss::VectorIOReader reader;
+            reader.data = std::vector<uint8_t>(data, data + size);
+            std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
 
-        if (auto ivf = dynamic_cast<faiss::IndexIVF*>(index)) {
-            log << "Index is IVF type" << std::endl;
-            log << "nlist (number of clusters): " << ivf->nlist << std::endl;
-            log << "nprobe: " << ivf->nprobe << std::endl;
+            // Downcast to IndexHNSWCagra
+            faiss::IndexHNSWCagra* hnsw_cagra = dynamic_cast<faiss::IndexHNSWCagra*>(index.get());
+            if (!hnsw_cagra) {
+                throw std::runtime_error("Index is not IndexHNSWCagra");
+            }
+
+            // Get the source vectors from IndexFlat pointer
+            faiss::IndexFlat* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+
+            // Optionally clear existing vectors if you want to replace (not append)
+            hnsw_cagra->reset();
+
+            // Add all vectors from flat to hnsw_cagra
+            std::vector<float> buf(flat->d);
+            for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
+                flat->reconstruct(i, buf.data());
+                hnsw_cagra->add(1, buf.data());
+            }
+
+            // Serialize the updated index back to memory
+            faiss::VectorIOWriter writer;
+            faiss::write_index(hnsw_cagra, &writer);
+            out = std::move(writer.data);
+        } catch (const std::exception& e) {
+            // Optionally log error
         }
-        if (index->ntotal > 0) {
-            std::vector<float> x(index->d);
-            index->reconstruct(0, x.data());
-            log << "First vector: ";
-            for (int i = 0; i < std::min<int>(index->d, 8); ++i)
-                log << x[i] << " ";
-            log << "..." << std::endl;
-        }
-        delete index;
-    } catch (const std::exception& e) {
-        // Optionally log error here
+        return out;
     }
-}
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {

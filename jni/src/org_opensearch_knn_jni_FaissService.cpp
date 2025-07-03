@@ -140,22 +140,31 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
     return (jlong)0;
 }
 
-JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
-    (JNIEnv* env, jobject obj, jbyteArray indexBytesJ)
+JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
+  (JNIEnv* env, jobject obj, jbyteArray indexBytesJ, jlong indexPtr)
 {
+    jbyteArray result = nullptr;
     try {
-        // Get the data from the Java byte[]
         jsize len = env->GetArrayLength(indexBytesJ);
         jbyte* bytes = env->GetByteArrayElements(indexBytesJ, NULL);
 
-        // Call the correct function directly!
-        knn_jni::faiss_wrapper::IndexReconstruct(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len));
+        // Call wrapper, which now returns std::vector<uint8_t>
+        std::vector<uint8_t> out = knn_jni::faiss_wrapper::IndexReconstruct(
+            reinterpret_cast<const uint8_t*>(bytes),
+            static_cast<size_t>(len),
+            indexPtr);
 
-        // Release resources
         env->ReleaseByteArrayElements(indexBytesJ, bytes, JNI_ABORT);
+
+        // Create Java byte array to return
+        result = env->NewByteArray(out.size());
+        if (result && !out.empty()) {
+            env->SetByteArrayRegion(result, 0, out.size(), reinterpret_cast<const jbyte*>(out.data()));
+        }
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }
+    return result;
 }
 
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToBinaryIndex(JNIEnv * env, jclass cls, jintArray idsJ,

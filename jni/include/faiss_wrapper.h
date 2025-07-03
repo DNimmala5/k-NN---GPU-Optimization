@@ -33,7 +33,7 @@ namespace knn_jni {
             knn_jni::faiss_wrapper::IndexService *indexService
         );
 
-        void IndexReconstruct(const uint8_t* data, size_t size);
+        std::vector<uint8_t> IndexReconstruct(const uint8_t* data, size_t size, int64_t indexPtr);
 
         void WriteIndex(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jobject output, jlong indexAddr, IndexService *indexService);
 

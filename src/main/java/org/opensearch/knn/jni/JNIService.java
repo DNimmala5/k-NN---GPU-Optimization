@@ -94,8 +94,8 @@ public class JNIService {
         return FaissService.buildFlatIndexFromNativeAddress(vectorAddress, numVectors, dimension, metricType);
     }
 
-    public static void indexReconstruct(byte[] faissFilePath) {
-        FaissService.indexReconstruct(faissFilePath);
+    public static byte[] indexReconstruct(byte[] faissFilePath, long indexPtr) {
+        return FaissService.indexReconstruct(faissFilePath, indexPtr);
     }
 
     /**

@@ -130,7 +130,7 @@ public class DefaultVectorRepositoryAccessorTests extends RemoteIndexBuildTests 
     }
 
     /**
-     * Verify the buffered read method in {@link DefaultVectorRepositoryAccessor#readFromRepository} produces the correct result
+     * Verify the buffered read method in {@link VectorRepositoryAccessor#readFromRepository} produces the correct result
      */
     public void testRepositoryRead() throws IOException {
         String TEST_FILE_NAME = randomAlphaOfLength(8) + KNNEngine.FAISS.getExtension();
@@ -165,10 +165,13 @@ public class DefaultVectorRepositoryAccessorTests extends RemoteIndexBuildTests 
         VectorRepositoryAccessor objectUnderTest = new DefaultVectorRepositoryAccessor(mockBlobContainer);
 
         // Verify file extension check
-        assertThrows(IllegalArgumentException.class, () -> objectUnderTest.readFromRepository("test_file.txt", testIndexOutputWithBuffer));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> objectUnderTest.readFromRepository("test_file.txt", testIndexOutputWithBuffer, 0L)
+        );
 
         // This should read from randomStream into testIndexOutput
-        objectUnderTest.readFromRepository(TEST_FILE_NAME, testIndexOutputWithBuffer);
+        objectUnderTest.readFromRepository(TEST_FILE_NAME, testIndexOutputWithBuffer, 0L);
         testIndexOutput.close();
 
         // Now try to read from the IndexOutput
