@@ -94,6 +94,10 @@ public class JNIService {
         return FaissService.buildFlatIndexFromNativeAddress(vectorAddress, numVectors, dimension, metricType);
     }
 
+    public static void indexReconstruct(byte[] faissFilePath) {
+        FaissService.indexReconstruct(faissFilePath);
+    }
+
     /**
      * Writes a faiss index to disk.
      *

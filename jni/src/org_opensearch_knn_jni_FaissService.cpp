@@ -140,6 +140,24 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
     return (jlong)0;
 }
 
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
+    (JNIEnv* env, jobject obj, jbyteArray indexBytesJ)
+{
+    try {
+        // Get the data from the Java byte[]
+        jsize len = env->GetArrayLength(indexBytesJ);
+        jbyte* bytes = env->GetByteArrayElements(indexBytesJ, NULL);
+
+        // Call the correct function directly!
+        knn_jni::faiss_wrapper::IndexReconstruct(reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len));
+
+        // Release resources
+        env->ReleaseByteArrayElements(indexBytesJ, bytes, JNI_ABORT);
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToBinaryIndex(JNIEnv * env, jclass cls, jintArray idsJ,
                                                                                     jlong vectorsAddressJ, jint dimJ,
                                                                                     jlong indexAddress, jint threadCount)

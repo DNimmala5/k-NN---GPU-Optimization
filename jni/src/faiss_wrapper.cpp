@@ -26,6 +26,8 @@
 #include "commons.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexBinaryHNSW.h"
+#include <faiss/index_io.h>
+#include <faiss/impl/io.h>
 
 #include <algorithm>
 #include <jni.h>
@@ -238,6 +240,36 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
+void knn_jni::faiss_wrapper::IndexReconstruct(const uint8_t* data, size_t size) {
+    // Use FAISS's in-memory index loader:
+    try {
+        std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+        faiss::VectorIOReader reader;
+        reader.data = std::vector<uint8_t>(data, data + size);
+        faiss::Index* index = faiss::read_index(&reader);
+        log << "Loaded FAISS index from in-memory buffer" << std::endl;
+        log << "d (dim): " << index->d << std::endl;
+        log << "ntotal (vectors): " << index->ntotal << std::endl;
+        log << "is_trained: " << index->is_trained << std::endl;
+
+        if (auto ivf = dynamic_cast<faiss::IndexIVF*>(index)) {
+            log << "Index is IVF type" << std::endl;
+            log << "nlist (number of clusters): " << ivf->nlist << std::endl;
+            log << "nprobe: " << ivf->nprobe << std::endl;
+        }
+        if (index->ntotal > 0) {
+            std::vector<float> x(index->d);
+            index->reconstruct(0, x.data());
+            log << "First vector: ";
+            for (int i = 0; i < std::min<int>(index->d, 8); ++i)
+                log << x[i] << " ";
+            log << "..." << std::endl;
+        }
+        delete index;
+    } catch (const std::exception& e) {
+        // Optionally log error here
+    }
+}
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {
