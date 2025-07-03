@@ -243,38 +243,118 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
 
 std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(const uint8_t* data, size_t size, int64_t indexPtr) {
     std::vector<uint8_t> out;
+        std::ofstream debug_log("remote_index_debug_cpp.log", std::ios::app);
+
+        debug_log << "[index reconstruction debug prints] Called IndexReconstruct. data size: " << size
+                  << ", indexPtr: " << indexPtr << std::endl;
+
         try {
-            // Load IndexHNSWCagra from memory buffer
+            // Read index from buffer
+            debug_log << "[index reconstruction debug prints] Attempting to read index from memory buffer..." << std::endl;
             faiss::VectorIOReader reader;
             reader.data = std::vector<uint8_t>(data, data + size);
-            std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
-
-            // Downcast to IndexHNSWCagra
-            faiss::IndexHNSWCagra* hnsw_cagra = dynamic_cast<faiss::IndexHNSWCagra*>(index.get());
-            if (!hnsw_cagra) {
-                throw std::runtime_error("Index is not IndexHNSWCagra");
+            std::unique_ptr<faiss::Index> index;
+            try {
+                index.reset(faiss::read_index(&reader));
+                if (index == nullptr) {
+                    debug_log << "[index reconstruction debug prints] FAIL: faiss::read_index returned nullptr." << std::endl;
+                    throw std::runtime_error("read_index returned nullptr");
+                }
+                debug_log << "[index reconstruction debug prints] OK: faiss::read_index returned a non-null index." << std::endl;
+                debug_log << "[index reconstruction debug prints] Top-level index class name (typeid): " << typeid(*index).name() << std::endl;
+            } catch (const std::exception& e) {
+                debug_log << "[index reconstruction debug prints] FAIL: Exception during faiss::read_index: " << e.what() << std::endl;
+                throw;
             }
 
+            // Try to cast to IndexIDMap
+            faiss::IndexIDMap* idmap = dynamic_cast<faiss::IndexIDMap*>(index.get());
+            faiss::Index* base_index = nullptr;
+            if (idmap) {
+                debug_log << "[index reconstruction debug prints] Index is an IndexIDMap." << std::endl;
+                if (idmap->index) {
+                    base_index = idmap->index;
+                    debug_log << "[index reconstruction debug prints] Underlying index class name (typeid): " << typeid(*base_index).name() << std::endl;
+                } else {
+                    debug_log << "[index reconstruction debug prints] ERROR: IndexIDMap underlying index is null!" << std::endl;
+                    throw std::runtime_error("IndexIDMap underlying index is null");
+                }
+            } else {
+                debug_log << "[index reconstruction debug prints] Index is not an IndexIDMap, using top-level index." << std::endl;
+                base_index = index.get();
+            }
+
+            // Check for HNSW/CAGRA types
+            faiss::IndexHNSW* hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index);
+            faiss::IndexHNSWCagra* hnsw_cagra = dynamic_cast<faiss::IndexHNSWCagra*>(base_index);
+
+            if (hnsw_cagra) {
+                debug_log << "[index reconstruction debug prints] Underlying index is IndexHNSWCagra." << std::endl;
+            } else if (hnsw) {
+                debug_log << "[index reconstruction debug prints] Underlying index is IndexHNSW." << std::endl;
+            } else {
+                debug_log << "[index reconstruction debug prints] Underlying index is not HNSW or HNSWCagra." << std::endl;
+            }
+
+            // Print some stats about the underlying index
+            debug_log << "[index reconstruction debug prints] Underlying index: d=" << base_index->d
+                      << " ntotal=" << base_index->ntotal << std::endl;
+
             // Get the source vectors from IndexFlat pointer
+            if (indexPtr == 0 || indexPtr == -1) {
+                debug_log << "[index reconstruction debug prints] ERROR: indexPtr is invalid (" << indexPtr << ")." << std::endl;
+                throw std::runtime_error("IndexFlat pointer is invalid");
+            }
+            debug_log << "[index reconstruction debug prints] indexPtr is (" << indexPtr << ")." << std::endl;
             faiss::IndexFlat* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+            if (!flat) {
+                debug_log << "[index reconstruction debug prints] FAIL: indexPtr reinterpret_cast to IndexFlat* yielded nullptr." << std::endl;
+                throw std::runtime_error("IndexFlat pointer is nullptr");
+            }
+            debug_log << "[index reconstruction debug prints] OK: IndexFlat pointer is valid." << std::endl;
+            debug_log << "[index reconstruction debug prints] IndexFlat stats: d=" << flat->d << ", ntotal=" << flat->ntotal << std::endl;
+
+            if (flat->ntotal == 0) {
+                debug_log << "[index reconstruction debug prints] WARNING: IndexFlat has 0 vectors (ntotal == 0)." << std::endl;
+            }
 
             // Optionally clear existing vectors if you want to replace (not append)
-            hnsw_cagra->reset();
+            debug_log << "[index reconstruction debug prints] Resetting underlying index before adding vectors." << std::endl;
+            base_index->reset();
 
-            // Add all vectors from flat to hnsw_cagra
+            // Add all vectors from flat to the underlying index
+            debug_log << "[index reconstruction debug prints] Adding vectors from IndexFlat to underlying index." << std::endl;
             std::vector<float> buf(flat->d);
             for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
                 flat->reconstruct(i, buf.data());
-                hnsw_cagra->add(1, buf.data());
+                base_index->add(1, buf.data());
+                if (i < 5 || i == flat->ntotal - 1) { // Log first 5 and last
+                    debug_log << "[index reconstruction debug prints] Added vector " << (i + 1) << "/" << flat->ntotal << std::endl;
+                }
             }
+            debug_log << "[index reconstruction debug prints] Finished adding " << flat->ntotal << " vectors." << std::endl;
 
             // Serialize the updated index back to memory
-            faiss::VectorIOWriter writer;
-            faiss::write_index(hnsw_cagra, &writer);
-            out = std::move(writer.data);
+            debug_log << "[index reconstruction debug prints] Serializing the updated index (including IDMap if present)..." << std::endl;
+            try {
+                faiss::VectorIOWriter writer;
+                faiss::write_index(index.get(), &writer);
+                out = std::move(writer.data);
+                if (out.empty()) {
+                    debug_log << "[index reconstruction debug prints] FAIL: Serialization output buffer is empty!" << std::endl;
+                } else {
+                    debug_log << "[index reconstruction debug prints] OK: Serialization complete. Output buffer size: " << out.size() << std::endl;
+                }
+            } catch (const std::exception& e) {
+                debug_log << "[index reconstruction debug prints] FAIL: Exception during serialization: " << e.what() << std::endl;
+                throw;
+            }
         } catch (const std::exception& e) {
-            // Optionally log error
+            debug_log << "[index reconstruction debug prints] Exception: " << e.what() << std::endl;
+        } catch (...) {
+            debug_log << "[index reconstruction debug prints] Unknown exception occurred." << std::endl;
         }
+        debug_log << "[index reconstruction debug prints] IndexReconstruct finished." << std::endl;
         return out;
     }
 
