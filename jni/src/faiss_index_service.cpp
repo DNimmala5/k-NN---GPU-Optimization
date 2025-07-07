@@ -143,7 +143,7 @@ void IndexService::insertToIndex(
 }
 
 void logIndexFlatFull(const faiss::IndexFlat* index, const std::string& prefix = "") {
-    std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+    std::ofstream log("remote_index_debug_cpp2.log", std::ios::app);
     log << prefix << "IndexFlat: dim=" << index->d
         << ", ntotal=" << index->ntotal
         << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP") << std::endl;
@@ -172,7 +172,7 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
         throw std::runtime_error("Invalid numVectors or dim");
     }
 
-    std::ofstream log("remote_index_debug_cpp.log", std::ios::app);
+    std::ofstream log("remote_index_debug_cpp3.log", std::ios::app);
     // Log vectors before adding to index
     for (int i = 0; i < numVectors; ++i) {
         log << "Before add: vector[" << i << "]: [";
@@ -193,6 +193,8 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
 
     // Log vectors after adding to index
     logIndexFlatFull(index, "After add: ");
+
+    log << "Returning pointer address: " << reinterpret_cast<jlong>(index) << std::endl;
 
     return reinterpret_cast<jlong>(index);
 }

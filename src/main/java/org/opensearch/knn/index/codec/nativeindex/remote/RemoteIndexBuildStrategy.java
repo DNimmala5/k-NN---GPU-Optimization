@@ -172,6 +172,11 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
 
             // 3. Build flat index
             indexPtr = buildFlatIndex(indexInfo);
+            try (java.io.FileWriter fw = new java.io.FileWriter("remote_index_debug_java.log", true)) {
+                fw.write("[Java debug] About to return indexPtr in buildAndWriteIndex: " + indexPtr + System.lineSeparator());
+            } catch (IOException e) {
+                // Optionally log or ignore
+            }
 
             // 4. Await vector build completion
             RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
@@ -313,6 +318,13 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         }
 
         vectorTransfer.close();
+
+        try (java.io.FileWriter fw = new java.io.FileWriter("remote_index_debug_java.log", true)) {
+            fw.write("[Java debug] About to return indexPtr in buildFlatIndex: " + indexPtr + System.lineSeparator());
+        } catch (IOException e) {
+            // Optionally log or ignore
+        }
+
         return indexPtr;
     }
 
