@@ -307,7 +307,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
 
                 indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
                 debugLog("Returned index ptr: " + indexPtr);
-                JNIService.free(indexPtr, engine);
+                // JNIService.free(indexPtr, engine);
 
                 batchSize = 0;
             }
