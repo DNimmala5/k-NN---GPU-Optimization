@@ -21,13 +21,14 @@ import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.jni.JNIService;
 
-import java.io.BufferedInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.io.IOException;
 
 import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorValues;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -226,8 +227,16 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
             .build();
     }
 
+    private static void debugLog(String message) {
+        try (FileWriter fw = new FileWriter("remote_index_debug_java.log", true)) {
+            fw.write(message + "\n");
+        } catch (IOException e) {
+            System.err.println("Debug log write failed: " + e.getMessage());
+        }
+    }
+
     @Override
-    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer) throws IOException {
+    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException {
         if (StringUtils.isBlank(fileName)) {
             throw new IllegalArgumentException("download path is null or empty");
         }
@@ -238,7 +247,20 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
 
         // TODO: We are using the sequential download API as multi-part parallel download is difficult for us to implement today and
         // requires some changes in core. For more details, see: https://github.com/opensearch-project/k-NN/issues/2464
-        InputStream graphStream = blobContainer.readBlob(fileName);
-        indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        byte[] faissData;
+        try (InputStream originalStream = blobContainer.readBlob(fileName); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+            byte[] tmp = new byte[8192];
+            int n;
+            while ((n = originalStream.read(tmp)) != -1) {
+                buffer.write(tmp, 0, n);
+            }
+            faissData = buffer.toByteArray();
+        }
+        debugLog("The indexPtr is " + indexPtr + " and the faissData is " + Arrays.toString(faissData));
+        byte[] reconstructedFaiss = JNIService.indexReconstruct(faissData, indexPtr);
+
+        try (InputStream graphStream = new ByteArrayInputStream(reconstructedFaiss)) {
+            indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        }
     }
 }

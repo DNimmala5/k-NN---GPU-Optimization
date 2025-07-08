@@ -238,6 +238,58 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
+std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(
+    const uint8_t* data,
+    size_t size,
+    int64_t indexPtr
+) {
+    std::vector<uint8_t> out;
+
+    try {
+        // Read index from input buffer
+        faiss::VectorIOReader reader;
+        reader.data = std::vector<uint8_t>(data, data + size);
+        std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
+        if (!index) {
+            throw std::runtime_error("Failed to read index from buffer");
+        }
+
+        // Determine base index (inside IDMap if wrapped)
+        faiss::IndexIDMap* idmap = dynamic_cast<faiss::IndexIDMap*>(index.get());
+        faiss::Index* base_index = idmap ? idmap->index : index.get();
+        if (!base_index) {
+            throw std::runtime_error("Base index is null");
+        }
+
+        // Ensure valid IndexFlat pointer
+        if (indexPtr == 0 || indexPtr == -1) {
+            throw std::runtime_error("Invalid IndexFlat pointer");
+        }
+
+        faiss::IndexFlat* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+        if (!flat) {
+            throw std::runtime_error("IndexFlat pointer cast failed");
+        }
+
+        // Reset base index and add vectors from flat
+        //base_index->reset();
+        std::vector<float> buf(flat->d);
+        for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
+            flat->reconstruct(i, buf.data());
+            base_index->add(1, buf.data());
+        }
+
+        // Serialize updated index to memory
+        faiss::VectorIOWriter writer;
+        faiss::write_index(index.get(), &writer);
+        out = std::move(writer.data);
+    } catch (...) {
+        // Let JNI layer handle exceptions
+        throw;
+    }
+
+    return out;
+}
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {

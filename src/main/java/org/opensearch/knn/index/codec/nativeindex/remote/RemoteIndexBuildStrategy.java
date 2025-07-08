@@ -159,6 +159,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
         metrics.startRemoteIndexBuildMetrics(indexInfo);
         boolean success = false;
+        long indexPtr = -1L;
         try {
             RepositoryContext repositoryContext = getRepositoryContext(indexInfo);
 
@@ -170,13 +171,13 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
 
             // 3. Build flat index
-            buildFlatIndex(indexInfo);
+            indexPtr = buildFlatIndex(indexInfo);
 
             // 4. Await vector build completion
             RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
 
             // 5. Download index file and write to indexOutput
-            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse);
+            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
             success = true;
             return;
         } catch (Exception e) {
@@ -264,10 +265,11 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         }
     }
 
-    private void buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
+    private long buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
         KNNVectorValues<?> knnVectorValues = indexInfo.getKnnVectorValuesSupplier().get();
         int totalDocs = indexInfo.getTotalLiveDocs();
         VectorDataType vectorDataType = indexInfo.getVectorDataType();
+        long indexPtr = -1L;
 
         // Advance to first valid doc
         if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
@@ -303,7 +305,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
                 long address = vectorTransfer.getVectorAddress();
                 debugLog("Flushing batch with " + batchSize + " vectors, address=" + address);
 
-                long indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+                indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
                 debugLog("Returned index ptr: " + indexPtr);
                 JNIService.free(indexPtr, engine);
 
@@ -315,12 +317,12 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             long address = vectorTransfer.getVectorAddress();
             debugLog("Flushing final batch with " + batchSize + " vectors, address=" + address);
 
-            long indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+            indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
             debugLog("Returned index ptr: " + indexPtr);
-            JNIService.free(indexPtr, engine);
         }
 
         vectorTransfer.close();
+        return indexPtr;
     }
 
     /**
@@ -355,14 +357,16 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     private void readFromRepository(
         BuildIndexParams indexInfo,
         RepositoryContext repositoryContext,
-        RemoteBuildStatusResponse remoteBuildStatusResponse
+        RemoteBuildStatusResponse remoteBuildStatusResponse,
+        long indexPtr
     ) {
         metrics.startRepositoryReadMetrics();
         boolean success = false;
         try {
             repositoryContext.vectorRepositoryAccessor.readFromRepository(
                 remoteBuildStatusResponse.getFileName(),
-                indexInfo.getIndexOutputWithBuffer()
+                indexInfo.getIndexOutputWithBuffer(),
+                indexPtr
             );
             success = true;
         } catch (Exception e) {

@@ -165,10 +165,13 @@ public class DefaultVectorRepositoryAccessorTests extends RemoteIndexBuildTests 
         VectorRepositoryAccessor objectUnderTest = new DefaultVectorRepositoryAccessor(mockBlobContainer);
 
         // Verify file extension check
-        assertThrows(IllegalArgumentException.class, () -> objectUnderTest.readFromRepository("test_file.txt", testIndexOutputWithBuffer));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> objectUnderTest.readFromRepository("test_file.txt", testIndexOutputWithBuffer, 0L)
+        );
 
         // This should read from randomStream into testIndexOutput
-        objectUnderTest.readFromRepository(TEST_FILE_NAME, testIndexOutputWithBuffer);
+        objectUnderTest.readFromRepository(TEST_FILE_NAME, testIndexOutputWithBuffer, 0L);
         testIndexOutput.close();
 
         // Now try to read from the IndexOutput
