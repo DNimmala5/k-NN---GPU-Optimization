@@ -62,7 +62,7 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
   (JNIEnv *, jclass, jlong, jint, jint, jstring);
 
 JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
-  (JNIEnv* env, jobject obj, jbyteArray indexBytesJ, jlong indexPtr);
+  (JNIEnv* env, jobject obj, jlong indexPtr);
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService

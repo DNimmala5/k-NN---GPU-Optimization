@@ -243,28 +243,10 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
 }
 
 std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(
-    const uint8_t* data,
-    size_t size,
-    int64_t indexPtr
-) {
+    int64_t indexPtr) {
     std::vector<uint8_t> out;
 
     try {
-        // Read index from input buffer
-        faiss::VectorIOReader reader;
-        reader.data = std::vector<uint8_t>(data, data + size);
-        std::unique_ptr<faiss::Index> index(faiss::read_index(&reader));
-        if (!index) {
-            throw std::runtime_error("Failed to read index from buffer");
-        }
-
-        // Determine base index (inside IDMap if wrapped)
-        faiss::IndexIDMap* idmap = dynamic_cast<faiss::IndexIDMap*>(index.get());
-        faiss::Index* base_index = idmap ? idmap->index : index.get();
-        if (!base_index) {
-            throw std::runtime_error("Base index is null");
-        }
-
         // Ensure valid IndexFlat pointer
         if (indexPtr == 0 || indexPtr == -1) {
             throw std::runtime_error("Invalid IndexFlat pointer");
@@ -275,7 +257,7 @@ std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(
             throw std::runtime_error("IndexFlat pointer cast failed");
         }
 
-        // --- DEBUG PRINT VECTORS IN INDEXFLAT BEFORE ADDING ---
+        // --- Optional: DEBUG PRINT VECTORS IN INDEXFLAT ---
         {
             std::ofstream flat_log("remote_indexflat_debug_cpp.log", std::ios::app);
             flat_log << std::setprecision(8) << std::fixed;
@@ -307,72 +289,11 @@ std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(
             flat_log << "==== End IndexFlat Debug Dump ====\n";
             flat_log.close();
         }
-        // --- END DEBUG PRINT VECTORS IN INDEXFLAT BEFORE ADDING ---
+        // --- END DEBUG ---
 
-        // Reset base index and add vectors from flat
-        std::vector<float> buf(flat->d);
-        for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
-            flat->reconstruct(i, buf.data());
-            base_index->add(1, buf.data());
-        }
-
-        // --- BEGIN DEBUG DUMP ---
-        std::ofstream log("remote_index_debug_cpp1.log", std::ios::app);
-        log << std::setprecision(8) << std::fixed;
-        log << "==== IndexIDMap + IndexHNSW Debug Dump ====\n";
-        log << "Outer Index: IndexIDMap\n";
-        log << "  Number of vectors (ntotal): " << idmap->ntotal << "\n";
-        log << "  Dimension (d): " << idmap->d << "\n";
-        log << "  Is trained: " << idmap->is_trained << "\n";
-        log << "  Metric type: " << idmap->metric_type << "\n";
-        log << "----\n";
-        log << "IDMap mapping (position => ID):\n";
-        for (size_t i = 0; i < idmap->id_map.size(); ++i) {
-            log << "  [" << i << "] => " << idmap->id_map[i] << "\n";
-        }
-        log << "----\n";
-
-        if (auto* hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index)) {
-            log << "Underlying Index: IndexHNSW or IndexHNSWCagra\n";
-            log << "  Number of vectors (ntotal): " << hnsw->ntotal << "\n";
-            log << "  Dimension (d): " << hnsw->d << "\n";
-            log << "  Is trained: " << hnsw->is_trained << "\n";
-            log << "  Metric type: " << hnsw->metric_type << "\n";
-            log << "  Verbose: " << hnsw->verbose << "\n";
-            log << "----\n";
-            log << "All vectors in underlying HNSW:\n";
-            std::vector<float> vec(hnsw->d);
-            for (faiss::idx_t i = 0; i < hnsw->ntotal; ++i) {
-                log << "Checking if reconstruct(i=" << i << ") is valid (ntotal=" << hnsw->ntotal << ")... ";
-                if (i >= 0 && i < hnsw->ntotal) {
-                    log << "valid. About to call reconstruct.\n";
-                    log.flush();
-                    hnsw->reconstruct(i, vec.data());
-                    log << "  [" << i << "]: [";
-                    for (int j = 0; j < hnsw->d; ++j) {
-                        log << vec[j];
-                        if (j < hnsw->d - 1) log << ", ";
-                    }
-                    log << "]\n";
-                } else {
-                    log << "INVALID INDEX! Skipping call to reconstruct.\n";
-                }
-                log.flush();
-            }
-            log << "----\n";
-            log << "HNSW graph and parameters are private/inaccessible via public API in this FAISS version.\n";
-            log << "For more, extend IndexHNSW with getters or print internals in FAISS itself.\n";
-        } else {
-            log << "Underlying index is NOT IndexHNSW (Cagra)!\n";
-        }
-
-        log << "==== End Debug Dump ====\n";
-        log.close();
-        // --- END DEBUG DUMP ---
-
-        // Serialize updated index to memory
+        // Serialize the IndexFlat directly
         faiss::VectorIOWriter writer;
-        faiss::write_index(index.get(), &writer);
+        faiss::write_index(flat, &writer);
         out = std::move(writer.data);
     } catch (...) {
         // Let JNI layer handle exceptions

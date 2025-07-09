@@ -141,20 +141,14 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
 }
 
 JNIEXPORT jbyteArray JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
-  (JNIEnv* env, jobject obj, jbyteArray indexBytesJ, jlong indexPtr)
+  (JNIEnv* env, jobject obj, jlong indexPtr)
 {
     jbyteArray result = nullptr;
     try {
-        jsize len = env->GetArrayLength(indexBytesJ);
-        jbyte* bytes = env->GetByteArrayElements(indexBytesJ, NULL);
 
         // Call wrapper, which now returns std::vector<uint8_t>
         std::vector<uint8_t> out = knn_jni::faiss_wrapper::IndexReconstruct(
-            reinterpret_cast<const uint8_t*>(bytes),
-            static_cast<size_t>(len),
             indexPtr);
-
-        env->ReleaseByteArrayElements(indexBytesJ, bytes, JNI_ABORT);
 
         // Create Java byte array to return
         result = env->NewByteArray(out.size());

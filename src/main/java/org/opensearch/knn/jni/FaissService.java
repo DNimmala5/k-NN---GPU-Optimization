@@ -105,7 +105,7 @@ class FaissService {
 
     public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
 
-    public static native byte[] indexReconstruct(byte[] faissFilePath, long indexPtr);
+    public static native byte[] indexReconstruct(long indexPtr);
 
     /**
      * Inserts to a faiss index. The memory occupied by the vectorsAddress will be freed up during the
