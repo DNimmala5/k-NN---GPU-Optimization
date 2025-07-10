@@ -67,6 +67,12 @@ public:
         faiss::MetricType metricType
     );
 
+    virtual void indexReconstruct(
+            const std::vector<uint8_t>& inputBuffer,
+            int64_t indexPtr,
+            std::vector<uint8_t>& outputBuffer
+        );
+
     /**
      * Write index to disk
      *

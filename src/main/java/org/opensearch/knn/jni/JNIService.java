@@ -20,6 +20,11 @@ import org.opensearch.knn.index.store.IndexInputWithBuffer;
 import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import org.opensearch.knn.index.util.IndexUtil;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+
 import java.util.Locale;
 import java.util.Map;
 
@@ -94,8 +99,26 @@ public class JNIService {
         return FaissService.buildFlatIndexFromNativeAddress(vectorAddress, numVectors, dimension, metricType);
     }
 
-    public static byte[] indexReconstruct(byte[] faissFilePath, long indexPtr) {
-        return FaissService.indexReconstruct(faissFilePath, indexPtr);
+    public static InputStream indexReconstruct(InputStream in, long indexPtr) {
+        final PipedOutputStream outPipe = new PipedOutputStream();
+        final PipedInputStream inPipe;
+        try {
+            inPipe = new PipedInputStream(outPipe);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create piped streams", e);
+        }
+
+        Thread nativeThread = new Thread(() -> {
+            FaissService.indexReconstruct(in, indexPtr, outPipe);
+            try {
+                outPipe.close();
+            } catch (IOException ignored) {
+                // ignore close exception
+            }
+        });
+        nativeThread.start();
+
+        return inPipe;
     }
 
     /**

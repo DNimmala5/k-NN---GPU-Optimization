@@ -20,6 +20,8 @@ import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Map;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 import static org.opensearch.knn.index.KNNSettings.isFaissAVX2Disabled;
 import static org.opensearch.knn.index.KNNSettings.isFaissAVX512Disabled;
@@ -105,7 +107,7 @@ class FaissService {
 
     public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
 
-    public static native byte[] indexReconstruct(byte[] faissFilePath, long indexPtr);
+    public static native void indexReconstruct(InputStream in, long indexPtr, OutputStream out);
 
     /**
      * Inserts to a faiss index. The memory occupied by the vectorsAddress will be freed up during the

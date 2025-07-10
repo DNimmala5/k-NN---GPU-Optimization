@@ -24,7 +24,6 @@ import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
 import org.opensearch.knn.jni.JNIService;
 
 import java.io.*;
-import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -247,20 +246,13 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
 
         // TODO: We are using the sequential download API as multi-part parallel download is difficult for us to implement today and
         // requires some changes in core. For more details, see: https://github.com/opensearch-project/k-NN/issues/2464
-        byte[] faissData;
-        try (InputStream originalStream = blobContainer.readBlob(fileName); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
-            byte[] tmp = new byte[8192];
-            int n;
-            while ((n = originalStream.read(tmp)) != -1) {
-                buffer.write(tmp, 0, n);
-            }
-            faissData = buffer.toByteArray();
-        }
-        debugLog("The indexPtr is " + indexPtr + " and the faissData is " + Arrays.toString(faissData));
-        byte[] reconstructedFaiss = JNIService.indexReconstruct(faissData, indexPtr);
 
-        try (InputStream graphStream = new ByteArrayInputStream(reconstructedFaiss)) {
-            indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        try (
+            InputStream originalStream = blobContainer.readBlob(fileName);
+            InputStream reconstructed = JNIService.indexReconstruct(originalStream, indexPtr)
+        ) {
+
+            indexOutputWithBuffer.writeFromStreamWithBuffer(reconstructed, INDEX_DOWNLOAD_BUFFER_SIZE);
         }
     }
 }

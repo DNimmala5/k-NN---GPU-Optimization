@@ -242,63 +242,47 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
-std::vector<uint8_t> knn_jni::faiss_wrapper::IndexReconstruct(
-    const uint8_t* data,
-    size_t size,
-    int64_t indexPtr
-) {
-    std::vector<uint8_t> out;
-
-    try {
-        // Read the HNSW index (from RVIB) from the input byte buffer
-        faiss::VectorIOReader reader;
-        reader.data = std::vector<uint8_t>(data, data + size);
-        std::unique_ptr<faiss::Index> graph_index(faiss::read_index(&reader));
-        if (!graph_index) {
-            throw std::runtime_error("Failed to read index from buffer");
-        }
-
-        // Ensure the top-level index is an IDMap
-        faiss::IndexIDMap* idmap = dynamic_cast<faiss::IndexIDMap*>(graph_index.get());
-        if (!idmap) {
-            throw std::runtime_error("Expected IndexIDMap as outer wrapper");
-        }
-
-        // Extract the HNSW (Cagra) base index
-        faiss::IndexHNSW* hnsw_base = dynamic_cast<faiss::IndexHNSW*>(idmap->index);
-        if (!hnsw_base) {
-            throw std::runtime_error("Expected IndexHNSWCagra as base index inside IDMap");
-        }
-
-        // Cast the IndexFlat pointer passed in from native side
-        if (indexPtr == 0 || indexPtr == -1) {
-            throw std::runtime_error("Invalid IndexFlat pointer");
-        }
-
-        faiss::IndexFlat* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
-        if (!flat) {
-            throw std::runtime_error("IndexFlat pointer cast failed");
-        }
-
-        // Attach the flat index as the storage for the HNSW graph
-        hnsw_base->storage = flat;
-
-        // At this point, the idmap now wraps a complete IndexHNSWFlat structure.
-        // Proceed to serialize it and return.
-
-        faiss::VectorIOWriter writer;
-        faiss::write_index(idmap, &writer);
-        out = std::move(writer.data);
-
-    } catch (...) {
-        // Let JNI layer handle exceptions
-        throw;
+void knn_jni::faiss_wrapper::IndexReconstruct(knn_jni::JNIUtilInterface* jniUtil,
+                                                        JNIEnv* env,
+                                                        jobject inputStreamJ,
+                                                        jlong indexPtr,
+                                                        jobject outputStreamJ,
+                                                        IndexService* indexService) {
+    if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
+        throw std::runtime_error("Input or output stream is null");
     }
 
-    return out;
+    jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
+    jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+
+    jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
+    jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+
+    const int BUFFER_SIZE = 8192;
+    std::vector<uint8_t> inputBuffer;
+    jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+
+    while (true) {
+        jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
+        if (bytesRead == -1) break;
+
+        jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
+        inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
+        env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+    }
+
+    std::vector<uint8_t> outputBuffer;
+    indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+
+    jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
+    size_t offset = 0;
+    while (offset < outputBuffer.size()) {
+        int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
+        env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
+        env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
+        offset += chunkSize;
+    }
 }
-
-
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {

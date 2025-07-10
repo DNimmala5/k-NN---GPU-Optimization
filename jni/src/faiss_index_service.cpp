@@ -197,6 +197,41 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
     return reinterpret_cast<jlong>(index);
 }
 
+void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
+        const std::vector<uint8_t>& inputBuffer,
+        int64_t indexPtr,
+        std::vector<uint8_t>& outputBuffer
+) {
+    faiss::VectorIOReader reader;
+    reader.data = inputBuffer;
+
+    std::unique_ptr<faiss::Index> graph_index(faiss::read_index(&reader));
+    if (!graph_index) {
+        throw std::runtime_error("Failed to deserialize FAISS index from input buffer");
+    }
+
+    auto* idmap = dynamic_cast<faiss::IndexIDMap*>(graph_index.get());
+    if (!idmap) {
+        throw std::runtime_error("Expected IndexIDMap as top-level index");
+    }
+
+    auto* hnsw = dynamic_cast<faiss::IndexHNSW*>(idmap->index);
+    if (!hnsw) {
+        throw std::runtime_error("Expected IndexHNSW as inner index of IDMap");
+    }
+
+    if (indexPtr == 0 || indexPtr == -1) {
+        throw std::runtime_error("Invalid IndexFlat pointer passed in");
+    }
+
+    auto* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+    hnsw->storage = flat;
+
+    faiss::VectorIOWriter writer;
+    faiss::write_index(idmap, &writer);
+    outputBuffer = std::move(writer.data);
+}
+
 void IndexService::writeIndex(
     faiss::IOWriter* writer,
     jlong idMapAddress
