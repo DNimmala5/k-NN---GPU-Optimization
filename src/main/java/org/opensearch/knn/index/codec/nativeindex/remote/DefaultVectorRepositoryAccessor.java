@@ -249,14 +249,12 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
 
         byte[] indexFlat = JNIService.indexReconstruct(indexPtr);
 
-        // 1. Stream the first part (graph) from the blob container
-        try (InputStream graphStream = blobContainer.readBlob(fileName)) {
-            indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
-        }
-
-        // 2. Get the second part (indexFlat) from JNI and stream it right after
-        try (InputStream indexFlatStream = new ByteArrayInputStream(indexFlat)) {
-            indexOutputWithBuffer.writeFromStreamWithBuffer(indexFlatStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        try (
+            InputStream graphStream = blobContainer.readBlob(fileName);
+            InputStream indexFlatStream = new ByteArrayInputStream(indexFlat);
+            InputStream combinedStream = new SequenceInputStream(graphStream, indexFlatStream)
+        ) {
+            indexOutputWithBuffer.writeFromStreamWithBuffer(combinedStream, INDEX_DOWNLOAD_BUFFER_SIZE);
         }
     }
 }
