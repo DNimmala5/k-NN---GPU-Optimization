@@ -20,6 +20,8 @@ import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Map;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 import static org.opensearch.knn.index.KNNSettings.isFaissAVX2Disabled;
 import static org.opensearch.knn.index.KNNSettings.isFaissAVX512Disabled;
@@ -102,6 +104,24 @@ class FaissService {
      * @param threadCount number of threads to use for insertion
      */
     public static native void insertToIndex(int[] ids, long vectorsAddress, int dim, long indexAddress, int threadCount);
+
+    /**
+     * Builds a flat FAISS index from vectors stored in native memory address.
+     * @param vectorAddress Address of native memory where vectors are stored
+     * @param numVectors Number of vectors to be indexed
+     * @param dimension Dimension of each vector
+     * @param metricType Distance metric to use (L2 or Inner Product)
+     * @return Address of native memory where the created flat index is stored
+     */
+    public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
+
+    /**
+     * Reconstructs a complete FAISS index by combining serialized index metadata with vector data.
+     * @param in Input stream containing serialized index metadata
+     * @param indexPtr Pointer to flat index containing vector data
+     * @param out Output stream where reconstructed index will be written
+     */
+    public static native void indexReconstruct(InputStream in, long indexPtr, OutputStream out);
 
     /**
      * Inserts to a faiss index. The memory occupied by the vectorsAddress will be freed up during the
