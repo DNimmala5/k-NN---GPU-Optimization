@@ -39,5 +39,5 @@ interface VectorRepositoryAccessor {
      * @param indexOutputWithBuffer     {@link IndexOutputWithBuffer} which will be used to write to the underlying {@link org.apache.lucene.store.IndexOutput}
      * @throws IOException
      */
-    void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer) throws IOException;
+    void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException;
 }
