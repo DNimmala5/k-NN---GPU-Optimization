@@ -27,6 +27,9 @@
 #include "commons.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexBinaryHNSW.h"
+#include <faiss/IndexFlat.h>
+#include <faiss/IndexIDMap.h>
+#include <faiss/VectorTransform.h>
 
 #include <algorithm>
 #include <jni.h>
@@ -182,6 +185,87 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
 
     // Create index
     indexService->insertToIndex(dim, numIds, threadCount, vectorsAddress, ids, index_ptr);
+}
+
+// JNI wrapper for building a flat FAISS index from vectors in native memory. Handles conversion of Java parameters and delegates to index service.
+jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jlong vectorAddress,
+    jint numVectors,
+    jint dimJ,
+    jstring metricTypeJ,
+    knn_jni::faiss_wrapper::IndexService* indexService
+) {
+    // Safety checks
+    if (vectorAddress <= 0) {
+        throw std::runtime_error("Input vector address cannot be null");
+    }
+    if (dimJ <= 0 || numVectors <= 0) {
+        throw std::runtime_error("Invalid dimensions or number of vectors");
+    }
+
+    // Convert metric type
+    const char* metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
+    faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
+    env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
+
+    // Cast the address to vector<float>* and extract raw data
+    std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
+    const float* inputVectors = vectorPtr->data();
+
+    // Build and return the index
+    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
+    return indexPtr;
+}
+
+// JNI wrapper that handles Java stream I/O for index reconstruction process
+void knn_jni::faiss_wrapper::IndexReconstruct(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jobject inputStreamJ,
+    jlong indexPtr,
+    jobject outputStreamJ,
+    IndexService* indexService
+) {
+    if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
+        throw std::runtime_error("Input or output stream is null");
+    }
+
+    // Get Java stream methods
+    jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
+    jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+
+    jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
+    jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+
+    // Read input stream into buffer
+    const int BUFFER_SIZE = 8192;
+    std::vector<uint8_t> inputBuffer;
+    jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+
+    while (true) {
+        jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
+        if (bytesRead == -1) break;
+
+        jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
+        inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
+        env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+    }
+
+    // Reconstruct index
+    std::vector<uint8_t> outputBuffer;
+    indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+
+    // Write reconstructed index to output stream
+    jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
+    size_t offset = 0;
+    while (offset < outputBuffer.size()) {
+        int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
+        env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
+        env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
+        offset += chunkSize;
+    }
 }
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
