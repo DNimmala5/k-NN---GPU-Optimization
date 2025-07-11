@@ -23,6 +23,14 @@ namespace knn_jni {
 
         void InsertToIndex(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jintArray idsJ, jlong vectorsAddressJ, jint dimJ, jlong indexAddr, jint threadCount, IndexService *indexService);
 
+        // Build a flat index in native memory with vector data and return a pointer to the index
+        jlong BuildFlatIndexFromNativeAddress(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jlong vectorAddress, jint numVectors, 
+                                                dimJ, jstring metricTypeJ,knn_jni::faiss_wrapper::IndexService *indexService);
+
+        // Reconstruct the complete index by attaching the flat index to the IndexHNSW that is wrapped by indexIDmap
+        void IndexReconstruct(knn_jni::JNIUtilInterface* jniUtil, JNIEnv* env, jobject inputStream, jlong indexPtr, 
+                                jobject outputStream, IndexService* indexService);
+
         void WriteIndex(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jobject output, jlong indexAddr, IndexService *indexService);
 
         // Create an index with ids and vectors. Instead of creating a new index, this function creates the index
