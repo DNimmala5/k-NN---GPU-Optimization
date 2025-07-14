@@ -260,9 +260,9 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
 
         // Initialize vector transfer mechanism for off-heap storage
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
-                vectorDataType,
-                bytesPerVector,
-                totalDocs
+            vectorDataType,
+            bytesPerVector,
+            totalDocs
         );
         int batchSize = 0;
 
@@ -294,7 +294,6 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         vectorTransfer.close();
         return indexPtr;
     }
-
 
     /**
      * Awaits the vector build to complete
@@ -383,7 +382,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         BlobPath blobPath = repository.basePath().add(indexSettings.getUUID() + VECTORS_PATH);
         String blobName = UUIDs.base64UUID() + "_" + indexInfo.getFieldName() + "_" + indexInfo.getSegmentWriteState().segmentInfo.name;
         VectorRepositoryAccessor vectorRepositoryAccessor = new DefaultVectorRepositoryAccessor(
-                repository.blobStore().blobContainer(blobPath)
+            repository.blobStore().blobContainer(blobPath)
         );
         return new RepositoryContext(repository, blobPath, vectorRepositoryAccessor, blobName);
     }

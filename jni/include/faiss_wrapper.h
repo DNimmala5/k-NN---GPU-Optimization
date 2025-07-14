@@ -25,7 +25,7 @@ namespace knn_jni {
 
         // Build a flat index in native memory with vector data and return a pointer to the index
         jlong BuildFlatIndexFromNativeAddress(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jlong vectorAddress, jint numVectors, 
-                                                dimJ, jstring metricTypeJ,knn_jni::faiss_wrapper::IndexService *indexService);
+                                                jint dimJ, jstring metricTypeJ,knn_jni::faiss_wrapper::IndexService *indexService);
 
         // Reconstruct the complete index by attaching the flat index to the IndexHNSW that is wrapped by indexIDmap
         void IndexReconstruct(knn_jni::JNIUtilInterface* jniUtil, JNIEnv* env, jobject inputStream, jlong indexPtr, 

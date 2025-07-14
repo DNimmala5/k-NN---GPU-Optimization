@@ -228,7 +228,7 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
     }
 
     @Override
-    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer) throws IOException {
+    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException {
         if (StringUtils.isBlank(fileName)) {
             throw new IllegalArgumentException("download path is null or empty");
         }

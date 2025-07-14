@@ -139,7 +139,7 @@ public class JNIService {
 
         return inPipe;
     }
-    
+
     /**
      * Writes a faiss index to disk.
      *
