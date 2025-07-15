@@ -171,8 +171,6 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
                 readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
                 success = true;
                 return;
-            } catch (TerminalIOException e) {
-                throw e;
             } catch (Exception e) {
                 log.error("Failed to build index remotely: " + indexInfo, e);
             } finally {
