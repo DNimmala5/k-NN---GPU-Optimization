@@ -147,37 +147,37 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
      * @throws IOException if an error occurs during the build process
      */
     @Override
-        public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
-            metrics.startRemoteIndexBuildMetrics(indexInfo);
-            boolean success = false;
-            long indexPtr = -1L;
-            try {
-                RepositoryContext repositoryContext = getRepositoryContext(indexInfo);
+    public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
+        metrics.startRemoteIndexBuildMetrics(indexInfo);
+        boolean success = false;
+        long indexPtr = -1L;
+        try {
+            RepositoryContext repositoryContext = getRepositoryContext(indexInfo);
 
-                // 1. Write required data to repository
-                writeToRepository(repositoryContext, indexInfo);
+            // 1. Write required data to repository
+            writeToRepository(repositoryContext, indexInfo);
 
-                // 2. Trigger remote index build
-                RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
-                RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+            // 2. Trigger remote index build
+            RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
+            RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
 
-                // 3. Build flat index in native memory, return pointer to it
-                indexPtr = buildFlatIndex(indexInfo);
+            // 3. Build flat index in native memory, return pointer to it
+            indexPtr = buildFlatIndex(indexInfo);
 
-                // 4. Await vector build completion
-                RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+            // 4. Await vector build completion
+            RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
 
-                // 5. Download partial index file, reconstruct complete index, and write to indexOutput
-                readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
-                success = true;
-                return;
-            } catch (Exception e) {
-                log.error("Failed to build index remotely: " + indexInfo, e);
-            } finally {
-                metrics.endRemoteIndexBuildMetrics(success);
-            }
-            fallbackStrategy.buildAndWriteIndex(indexInfo);
+            // 5. Download partial index file, reconstruct complete index, and write to indexOutput
+            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+            success = true;
+            return;
+        } catch (Exception e) {
+            log.error("Failed to build index remotely: " + indexInfo, e);
+        } finally {
+            metrics.endRemoteIndexBuildMetrics(success);
         }
+        fallbackStrategy.buildAndWriteIndex(indexInfo);
+    }
 
     /**
      * Writes the required vector and doc ID data to the repository
@@ -254,9 +254,9 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
 
         // Initialize vector transfer mechanism for off-heap storage
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
-                vectorDataType,
-                bytesPerVector,
-                totalDocs
+            vectorDataType,
+            bytesPerVector,
+            totalDocs
         );
         int batchSize = 0;
 
@@ -319,22 +319,20 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
      * Downloads the index file from the repository and writes to the indexOutput
      */
     private void readFromRepository(
-            BuildIndexParams indexInfo,
-            RepositoryContext repositoryContext,
-            RemoteBuildStatusResponse remoteBuildStatusResponse,
-            long indexPtr
-    ) throws TerminalIOException {
+        BuildIndexParams indexInfo,
+        RepositoryContext repositoryContext,
+        RemoteBuildStatusResponse remoteBuildStatusResponse,
+        long indexPtr
+    ) {
         metrics.startRepositoryReadMetrics();
         boolean success = false;
         try {
             repositoryContext.vectorRepositoryAccessor.readFromRepository(
-                    remoteBuildStatusResponse.getFileName(),
-                    indexInfo.getIndexOutputWithBuffer(),
-                    indexPtr
+                remoteBuildStatusResponse.getFileName(),
+                indexInfo.getIndexOutputWithBuffer(),
+                indexPtr
             );
             success = true;
-        } catch (TerminalIOException e) {
-            throw e;
         } catch (Exception e) {
             throw new RuntimeException(String.format("Repository read failed for vector field [%s]", indexInfo.getFieldName()), e);
         } finally {

@@ -240,8 +240,8 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
         // TODO: We are using the sequential download API as multi-part parallel download is difficult for us to implement today and
         // requires some changes in core. For more details, see: https://github.com/opensearch-project/k-NN/issues/2464
         try (
-                InputStream originalStream = blobContainer.readBlob(fileName);
-                InputStream reconstructed = JNIService.indexReconstruct(originalStream, indexPtr)
+            InputStream originalStream = blobContainer.readBlob(fileName);
+            InputStream reconstructed = JNIService.indexReconstruct(originalStream, indexPtr)
         ) {
 
             indexOutputWithBuffer.writeFromStreamWithBuffer(reconstructed, INDEX_DOWNLOAD_BUFFER_SIZE);
