@@ -16,6 +16,7 @@
 #include "faiss/IndexIVFFlat.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexIDMap.h"
+#include "faiss/IndexFlat.h"
 
 #include <string>
 #include <vector>
@@ -136,6 +137,80 @@ void IndexService::insertToIndex(
 
     // Add vectors
     idMap->add_with_ids(numVectors, inputVectors->data(), ids.data());
+}
+
+/**
+ * Builds a flat FAISS index (L2 or Inner Product) from vectors in native memory.
+ * Returns a pointer to the created index structure.
+ */
+jlong IndexService::buildFlatIndexFromNativeAddress(
+    int numVectors,
+    int dim,
+    const float *vectors,
+    faiss::MetricType metricType
+) {
+    // Validate input parameters
+    if (vectors == nullptr) {
+        throw std::runtime_error("Input vectors cannot be null");
+    }
+    if (numVectors <= 0 || dim <= 0) {
+        throw std::runtime_error("Invalid numVectors or dim");
+    }
+
+    // Create appropriate index type based on metric
+    faiss::IndexFlat *index = nullptr;
+    if (metricType == faiss::METRIC_INNER_PRODUCT) {
+        index = new faiss::IndexFlatIP(dim);
+    } else {
+        index = new faiss::IndexFlatL2(dim);
+    }
+
+    // Add vectors to index
+    index->add(numVectors, vectors);
+
+    return reinterpret_cast<jlong>(index);
+}
+
+/**
+ * Reconstructs a complete HNSW index by combining the graph structure and ID mappings
+ * from inputBuffer with vector data from a flat index. Serializes result to outputBuffer.
+ */
+void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
+        const std::vector<uint8_t>& inputBuffer,
+        int64_t indexPtr,
+        std::vector<uint8_t>& outputBuffer
+) {
+    // Deserialize index structure from input
+    faiss::VectorIOReader reader;
+    reader.data = inputBuffer;
+    std::unique_ptr<faiss::Index> graph_index(faiss::read_index(&reader));
+    if (!graph_index) {
+        throw std::runtime_error("Failed to deserialize FAISS index from input buffer");
+    }
+
+    // Validate index hierarchy (IDMap -> HNSW)
+    auto* idmap = dynamic_cast<faiss::IndexIDMap*>(graph_index.get());
+    if (!idmap) {
+        throw std::runtime_error("Expected IndexIDMap as top-level index");
+    }
+
+    auto* hnsw = dynamic_cast<faiss::IndexHNSW*>(idmap->index);
+    if (!hnsw) {
+        throw std::runtime_error("Expected IndexHNSW as inner index of IDMap");
+    }
+
+    // Validate flat index pointer
+    if (indexPtr == 0 || indexPtr == -1) {
+        throw std::runtime_error("Invalid IndexFlat pointer passed in");
+    }
+
+    // Combine structures and serialize
+    auto* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+    hnsw->storage = flat;
+
+    faiss::VectorIOWriter writer;
+    faiss::write_index(idmap, &writer);
+    outputBuffer = std::move(writer.data);
 }
 
 void IndexService::writeIndex(
