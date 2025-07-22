@@ -39,6 +39,7 @@ import org.opensearch.knn.index.VectorDataType;
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.concurrent.CompletableFuture;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -150,25 +151,34 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
         metrics.startRemoteIndexBuildMetrics(indexInfo);
         boolean success = false;
-        long indexPtr = -1L;
+
         try {
             RepositoryContext repositoryContext = getRepositoryContext(indexInfo);
 
-            // 1. Write required data to repository
-            writeToRepository(repositoryContext, indexInfo);
+            // Parallelized task A: 1. Write to repo → 2. Trigger build → 4. Await completion
+            CompletableFuture<RemoteBuildStatusResponse> remoteBuildFuture = CompletableFuture.supplyAsync(() -> {
+                writeToRepository(repositoryContext, indexInfo);
+                RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
+                RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+                return awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+            });
 
-            // 2. Trigger remote index build
-            RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
-            RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+            // Parallelized task B: 3. Build flat index
+            CompletableFuture<Long> indexPtrFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return buildFlatIndex(indexInfo);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
 
-            // 3. Build flat index in native memory, return pointer to it
-            indexPtr = buildFlatIndex(indexInfo);
+            // Wait for both to complete, then run 5. Download/reconstruct
+            CompletableFuture<Void> allDone = remoteBuildFuture.thenCombine(indexPtrFuture, (remoteBuildStatusResponse, indexPtr) -> {
+                readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+                return null;
+            });
 
-            // 4. Await vector build completion
-            RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
-
-            // 5. Download partial index file, reconstruct complete index, and write to indexOutput
-            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+            allDone.join(); // Block until done
             success = true;
             return;
         } catch (Exception e) {
