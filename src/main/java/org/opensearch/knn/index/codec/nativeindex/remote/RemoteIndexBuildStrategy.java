@@ -30,10 +30,16 @@ import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
+import org.opensearch.knn.jni.JNIService;
+import org.opensearch.knn.index.engine.KNNEngine;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
+import org.opensearch.knn.index.VectorDataType;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.concurrent.CompletableFuture;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -145,21 +151,34 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     public void buildAndWriteIndex(BuildIndexParams indexInfo) throws IOException {
         metrics.startRemoteIndexBuildMetrics(indexInfo);
         boolean success = false;
+
         try {
             RepositoryContext repositoryContext = getRepositoryContext(indexInfo);
 
-            // 1. Write required data to repository
-            writeToRepository(repositoryContext, indexInfo);
+            // Parallelized task A: 1. Write to repo → 2. Trigger build → 4. Await completion
+            CompletableFuture<RemoteBuildStatusResponse> remoteBuildFuture = CompletableFuture.supplyAsync(() -> {
+                writeToRepository(repositoryContext, indexInfo);
+                RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
+                RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+                return awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+            });
 
-            // 2. Trigger remote index build
-            RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
-            RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+            // Parallelized task B: 3. Build flat index
+            CompletableFuture<Long> indexPtrFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return buildFlatIndex(indexInfo);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
 
-            // 3. Await vector build completion
-            RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+            // Wait for both to complete, then run 5. Download/reconstruct
+            CompletableFuture<Void> allDone = remoteBuildFuture.thenCombine(indexPtrFuture, (remoteBuildStatusResponse, indexPtr) -> {
+                readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+                return null;
+            });
 
-            // 4. Download index file and write to indexOutput
-            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse);
+            allDone.join(); // Block until done
             success = true;
             return;
         } catch (Exception e) {
@@ -219,6 +238,68 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     }
 
     /**
+     * Builds a flat index for KNN vector search using native memory
+     * @param indexInfo BuildIndexParams containing vector information and build parameters
+     * @return long pointer to the native memory where the flat index is stored
+     * @throws IOException if there are errors during vector access or index building
+     * @throws IllegalStateException if no vectors are available to index
+     */
+    private long buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
+        // Initialize vector values and metadata
+        KNNVectorValues<?> knnVectorValues = indexInfo.getKnnVectorValuesSupplier().get();
+        int totalDocs = indexInfo.getTotalLiveDocs();
+        VectorDataType vectorDataType = indexInfo.getVectorDataType();
+        long indexPtr = -1L;
+
+        // Advance to first valid doc and validate vector existence
+        if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
+            throw new IllegalStateException("No vectors to index");
+        }
+
+        // Extract metadata from first vector
+        float[] firstVector = (float[]) knnVectorValues.getVector();
+        int dimension = knnVectorValues.dimension();
+        int bytesPerVector = knnVectorValues.bytesPerVector();
+        KNNEngine engine = indexInfo.getKnnEngine();
+
+        // Initialize vector transfer mechanism for off-heap storage
+        OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
+            vectorDataType,
+            bytesPerVector,
+            totalDocs
+        );
+        int batchSize = 0;
+
+        // Process and transfer the first vector
+        boolean transferred = vectorTransfer.transfer(firstVector, false);
+        batchSize++;
+
+        // Process remaining vectors in batches
+        while (knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
+            float[] vector = (float[]) knnVectorValues.getVector();
+            transferred = vectorTransfer.transfer(vector, false);
+            batchSize++;
+
+            // When batch is transferred, build index for current batch
+            if (transferred) {
+                long address = vectorTransfer.getVectorAddress();
+                indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+                batchSize = 0;
+            }
+        }
+
+        // Process any remaining vectors in the final batch
+        if (vectorTransfer.flush(false)) {
+            long address = vectorTransfer.getVectorAddress();
+            indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+        }
+
+        // Clean up resources
+        vectorTransfer.close();
+        return indexPtr;
+    }
+
+    /**
      * Awaits the vector build to complete
      * @return RemoteBuildStatusResponse containing the completed status response from the remote service.
      * This will only be returned with a COMPLETED_INDEX_BUILD status, otherwise the method will throw an exception.
@@ -250,14 +331,16 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     private void readFromRepository(
         BuildIndexParams indexInfo,
         RepositoryContext repositoryContext,
-        RemoteBuildStatusResponse remoteBuildStatusResponse
+        RemoteBuildStatusResponse remoteBuildStatusResponse,
+        long indexPtr
     ) {
         metrics.startRepositoryReadMetrics();
         boolean success = false;
         try {
             repositoryContext.vectorRepositoryAccessor.readFromRepository(
                 remoteBuildStatusResponse.getFileName(),
-                indexInfo.getIndexOutputWithBuffer()
+                indexInfo.getIndexOutputWithBuffer(),
+                indexPtr
             );
             success = true;
         } catch (Exception e) {

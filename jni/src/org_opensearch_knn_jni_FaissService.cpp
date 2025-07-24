@@ -14,6 +14,7 @@
 #include <jni.h>
 
 #include <vector>
+#include <algorithm>
 
 #include "faiss_wrapper.h"
 #include "jni_util.h"
@@ -92,6 +93,34 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JN
         knn_jni::faiss_wrapper::InsertToIndex(&jniUtil, env, idsJ, vectorsAddressJ, dimJ, indexAddress, threadCount, &indexService);
     } catch (...) {
         // NOTE: ADDING DELETE STATEMENT HERE CAUSES A CRASH!
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+// JNI entry point for building a flat index - creates service instance and delegates to faiss wrapper
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexFromNativeAddress(
+    JNIEnv *env, jclass cls, jlong vectorAddress, jint numVectors, jint dimJ, jstring metricTypeJ) {
+    try {
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        return knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+            &jniUtil, env, vectorAddress, numVectors, dimJ, metricTypeJ, &indexService
+        );
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+    return (jlong)0;
+}
+
+// JNI entry point for index reconstruction - creates service instance and handles Java exceptions
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
+(JNIEnv * env, jclass cls, jobject inputStreamJ, jlong indexPtr, jobject outputStreamJ) {
+    try {
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+
+        knn_jni::faiss_wrapper::IndexReconstruct(&jniUtil, env, inputStreamJ, indexPtr, outputStreamJ, &indexService);
+    } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }
 }

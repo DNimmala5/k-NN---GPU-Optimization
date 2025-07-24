@@ -21,6 +21,7 @@ import org.opensearch.knn.index.VectorDataType;
 import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import org.opensearch.knn.index.vectorvalues.KNNVectorValues;
+import org.opensearch.knn.jni.JNIService;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -227,7 +228,7 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
     }
 
     @Override
-    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer) throws IOException {
+    public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException {
         if (StringUtils.isBlank(fileName)) {
             throw new IllegalArgumentException("download path is null or empty");
         }
@@ -238,7 +239,12 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
 
         // TODO: We are using the sequential download API as multi-part parallel download is difficult for us to implement today and
         // requires some changes in core. For more details, see: https://github.com/opensearch-project/k-NN/issues/2464
-        InputStream graphStream = blobContainer.readBlob(fileName);
-        indexOutputWithBuffer.writeFromStreamWithBuffer(graphStream, INDEX_DOWNLOAD_BUFFER_SIZE);
+        try (
+            InputStream originalStream = blobContainer.readBlob(fileName);
+            InputStream reconstructed = JNIService.indexReconstruct(originalStream, indexPtr)
+        ) {
+
+            indexOutputWithBuffer.writeFromStreamWithBuffer(reconstructed, INDEX_DOWNLOAD_BUFFER_SIZE);
+        }
     }
 }
