@@ -40,6 +40,7 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -157,36 +158,53 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
 
             // Parallelized task A: 1. Write to repo → 2. Trigger build → 4. Await completion
             CompletableFuture<RemoteBuildStatusResponse> remoteBuildFuture = CompletableFuture.supplyAsync(() -> {
-                writeToRepository(repositoryContext, indexInfo);
-                RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
-                RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
-                return awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+                try {
+                    writeToRepository(repositoryContext, indexInfo);
+                    RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
+                    RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+                    return awaitIndexBuild(remoteBuildResponse, indexInfo, client);
+                } catch (Exception e) {
+                    log.error("Error in remote build process", e);
+                    throw new CompletionException(e);
+                }
             });
 
             // Parallelized task B: 3. Build flat index
             CompletableFuture<Long> indexPtrFuture = CompletableFuture.supplyAsync(() -> {
                 try {
                     return buildFlatIndex(indexInfo);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+                } catch (Exception e) {
+                    log.error("Error building flat index", e);
+                    throw new CompletionException(e);
                 }
             });
 
             // Wait for both to complete, then run 5. Download/reconstruct
             CompletableFuture<Void> allDone = remoteBuildFuture.thenCombine(indexPtrFuture, (remoteBuildStatusResponse, indexPtr) -> {
-                readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
-                return null;
+                try {
+                    readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+                    return null;
+                } catch (Exception e) {
+                    log.error("Error reading from repository", e);
+                    throw new CompletionException(e);
+                }
             });
 
             allDone.join(); // Block until done
             success = true;
-            return;
+        } catch (CompletionException e) {
+            log.error("A parallel task failed: " + indexInfo, e.getCause());
+            throw new IOException("Failed to build index remotely", e.getCause());
         } catch (Exception e) {
             log.error("Failed to build index remotely: " + indexInfo, e);
+            throw new IOException("Failed to build index remotely", e);
         } finally {
             metrics.endRemoteIndexBuildMetrics(success);
         }
-        fallbackStrategy.buildAndWriteIndex(indexInfo);
+
+        if (!success) {
+            fallbackStrategy.buildAndWriteIndex(indexInfo);
+        }
     }
 
     /**
