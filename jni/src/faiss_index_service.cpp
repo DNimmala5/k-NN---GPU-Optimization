@@ -211,6 +211,10 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
     faiss::VectorIOWriter writer;
     faiss::write_index(idmap, &writer);
     outputBuffer = std::move(writer.data);
+
+    delete flat;
+    flat = nullptr;
+    hnsw->storage = nullptr;
 }
 
 void IndexService::writeIndex(
