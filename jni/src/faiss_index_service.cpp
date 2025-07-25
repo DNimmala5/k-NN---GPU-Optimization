@@ -23,6 +23,9 @@
 #include <memory>
 #include <type_traits>
 
+#include <fstream>
+#include <iomanip>
+
 namespace knn_jni {
 namespace faiss_wrapper {
 
@@ -139,6 +142,25 @@ void IndexService::insertToIndex(
     idMap->add_with_ids(numVectors, inputVectors->data(), ids.data());
 }
 
+void logIndexFlatFirst5(const faiss::IndexFlat* index, const std::string& prefix = "") {
+    std::ofstream log("rem_ind_deb_cpp.log", std::ios::app);
+    log << prefix << "IndexFlat: dim=" << index->d
+        << ", ntotal=" << index->ntotal
+        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP") << std::endl;
+
+    std::vector<float> vec(index->d);
+    for (faiss::idx_t i = 0; i < std::min(5, (int)index->ntotal); ++i) {
+        index->reconstruct(i, vec.data());
+        log << prefix << "  vector[" << i << "]: [";
+        for (int j = 0; j < index->d; ++j) {
+            log << std::setprecision(6) << vec[j];
+            if (j < index->d - 1) log << ", ";
+        }
+        log << "]" << std::endl;
+    }
+    log.flush();
+}
+
 /**
  * Builds a flat FAISS index (L2 or Inner Product) from vectors in native memory.
  * Returns a pointer to the created index structure.
@@ -149,6 +171,9 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
     const float *vectors,
     faiss::MetricType metricType
 ) {
+
+    std::ofstream log("rem_ind_deb_cpp.log", std::ios::app);
+
     // Validate input parameters
     if (vectors == nullptr) {
         throw std::runtime_error("Input vectors cannot be null");
@@ -168,6 +193,8 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
     // Add vectors to index
     index->add(numVectors, vectors);
 
+    logIndexFlatFirst5(index, "After adding vectors: ");
+
     return reinterpret_cast<jlong>(index);
 }
 
@@ -180,6 +207,9 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         int64_t indexPtr,
         std::vector<uint8_t>& outputBuffer
 ) {
+
+    std::ofstream log("rem_ind_deb_cpp.log", std::ios::app);
+
     // Deserialize index structure from input
     faiss::VectorIOReader reader;
     reader.data = inputBuffer;
@@ -208,9 +238,32 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
     auto* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
     hnsw->storage = flat;
 
+    // Log the first 5 vectors from the flat index
+        log << "Flat index after assignment to HNSW storage: dim=" << flat->d
+            << ", ntotal=" << flat->ntotal
+            << ", metric_type=" << (flat->metric_type == faiss::METRIC_L2 ? "L2" : "IP") << std::endl;
+
+        std::vector<float> vec(flat->d);
+        for (faiss::idx_t i = 0; i < std::min(5, (int)flat->ntotal); ++i) {
+            flat->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < flat->d; ++j) {
+                log << std::setprecision(6) << vec[j];
+                if (j < flat->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+        }
+        log.flush();
+
     faiss::VectorIOWriter writer;
     faiss::write_index(idmap, &writer);
     outputBuffer = std::move(writer.data);
+
+    delete flat;
+    flat = nullptr;
+    hnsw->storage = nullptr;
+
+    log << "ind rec done" << std::endl;
 }
 
 void IndexService::writeIndex(

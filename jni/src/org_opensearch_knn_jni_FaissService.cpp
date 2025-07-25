@@ -15,6 +15,8 @@
 
 #include <vector>
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 
 #include "faiss_wrapper.h"
 #include "jni_util.h"
@@ -118,7 +120,8 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
     try {
         std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
         knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
-
+        std::ofstream log("rem_ind_deb_cpp.log", std::ios::app);
+        log << "faissservice.cpp" << std::endl;
         knn_jni::faiss_wrapper::IndexReconstruct(&jniUtil, env, inputStreamJ, indexPtr, outputStreamJ, &indexService);
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);

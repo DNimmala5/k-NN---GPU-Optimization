@@ -34,6 +34,7 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <fstream>
 
 // Defines type of IDSelector
 enum FilterIdsSelectorType{
@@ -255,6 +256,40 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     // Reconstruct index
     std::vector<uint8_t> outputBuffer;
     indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+
+    // Validate reconstructed index by trying to read it
+        std::ofstream log("rem_ind_deb_cpp.log", std::ios::app);
+        try {
+            faiss::VectorIOReader validateReader;
+            validateReader.data = outputBuffer;
+            std::unique_ptr<faiss::Index> validationIndex(faiss::read_index(&validateReader));
+
+            if (!validationIndex) {
+                throw std::runtime_error("Validation failed: Could not read reconstructed index");
+            }
+
+            // Additional validation of index structure
+            auto* validIdmap = dynamic_cast<faiss::IndexIDMap*>(validationIndex.get());
+            if (!validIdmap) {
+                throw std::runtime_error("Validation failed: Expected IndexIDMap as top-level index");
+            }
+
+            auto* validHnsw = dynamic_cast<faiss::IndexHNSW*>(validIdmap->index);
+            if (!validHnsw) {
+                throw std::runtime_error("Validation failed: Expected IndexHNSW as inner index");
+            }
+
+            // Log successful validation
+            log << "Reconstructed index validation successful. "
+                << "dim=" << validationIndex->d
+                << ", ntotal=" << validationIndex->ntotal << std::endl;
+            log.flush();
+
+        } catch (const std::exception& e) {
+            log << "Error validating reconstructed index: " << e.what() << std::endl;
+            log.flush();
+            throw; // Re-throw the exception after logging
+        }
 
     // Write reconstructed index to output stream
     jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
