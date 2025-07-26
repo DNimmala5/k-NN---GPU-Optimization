@@ -312,7 +312,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             env->ExceptionClear();
         }
         // Convert C++ exception to Java exception
-        jniUtil->throwJavaException(env, e.what());
+        jniUtil->ThrowJavaException(env, e.what());
     }
     catch (...) {
         // Clear any pending Java exceptions
@@ -320,7 +320,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             env->ExceptionClear();
         }
         // Handle unknown exceptions
-        jniUtil->throwJavaException(env, "Unknown error occurred during index reconstruction");
+        jniUtil->ThrowJavaException(env, "Unknown error occurred during index reconstruction");
     }
 }
 
