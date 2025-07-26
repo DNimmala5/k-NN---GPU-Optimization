@@ -242,6 +242,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+        env->DeleteLocalRef(inputStreamCls);  // Cleanup inputStreamCls
         if (readMethod == nullptr) {
             throw std::runtime_error("Failed to get read method");
         }
@@ -252,6 +253,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+        env->DeleteLocalRef(outputStreamCls);  // Cleanup outputStreamCls
         if (writeMethod == nullptr) {
             throw std::runtime_error("Failed to get write method");
         }
@@ -267,18 +269,21 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         while (true) {
             jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
             if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer before throwing
                 throw std::runtime_error("Error reading from input stream");
             }
             if (bytesRead == -1) break;
 
             jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
             if (tempBytes == nullptr) {
+                env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer before throwing
                 throw std::runtime_error("Failed to get byte array elements");
             }
 
             inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
             env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
         }
+        env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer after reading
 
         // Reconstruct index
         std::vector<uint8_t> outputBuffer;
@@ -293,36 +298,38 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         size_t offset = 0;
         while (offset < outputBuffer.size()) {
             int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
-            env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, 
+            env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize,
                 reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
             if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);  // Cleanup javaOutBuffer before throwing
                 throw std::runtime_error("Error setting byte array region");
             }
 
             env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
             if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);  // Cleanup javaOutBuffer before throwing
                 throw std::runtime_error("Error writing to output stream");
             }
             offset += chunkSize;
         }
+        env->DeleteLocalRef(javaOutBuffer);  // Final cleanup of javaOutBuffer
+
     }
     catch (const std::exception& e) {
-        // Clear any pending Java exceptions
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
-        // Convert C++ exception to Java exception
-        jniUtil->throwJavaException(env, e.what());
+        jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
     }
     catch (...) {
-        // Clear any pending Java exceptions
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
-        // Handle unknown exceptions
-        jniUtil->throwJavaException(env, "Unknown error occurred during index reconstruction");
+        jniUtil->ThrowJavaException(env, "RuntimeException",
+            "Unknown error occurred during index reconstruction");
     }
 }
+
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {
