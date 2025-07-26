@@ -35,6 +35,9 @@
 #include <string>
 #include <vector>
 
+#include <stdexcept>
+#include <cstdint>
+
 // Defines type of IDSelector
 enum FilterIdsSelectorType{
     BITMAP = 0, BATCH = 1,
@@ -227,43 +230,97 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
-        throw std::runtime_error("Input or output stream is null");
+    try {
+        if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
+            throw std::runtime_error("Input or output stream is null");
+        }
+
+        // Get Java stream methods
+        jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
+        if (inputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get input stream class");
+        }
+
+        jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+        if (readMethod == nullptr) {
+            throw std::runtime_error("Failed to get read method");
+        }
+
+        jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
+        if (outputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get output stream class");
+        }
+
+        jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+        if (writeMethod == nullptr) {
+            throw std::runtime_error("Failed to get write method");
+        }
+
+        // Read input stream into buffer
+        const int BUFFER_SIZE = 8192;
+        std::vector<uint8_t> inputBuffer;
+        jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaBuffer == nullptr) {
+            throw std::runtime_error("Failed to create Java buffer");
+        }
+
+        while (true) {
+            jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
+            if (env->ExceptionCheck()) {
+                throw std::runtime_error("Error reading from input stream");
+            }
+            if (bytesRead == -1) break;
+
+            jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
+            if (tempBytes == nullptr) {
+                throw std::runtime_error("Failed to get byte array elements");
+            }
+
+            inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
+            env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+        }
+
+        // Reconstruct index
+        std::vector<uint8_t> outputBuffer;
+        indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+
+        // Write reconstructed index to output stream
+        jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaOutBuffer == nullptr) {
+            throw std::runtime_error("Failed to create output Java buffer");
+        }
+
+        size_t offset = 0;
+        while (offset < outputBuffer.size()) {
+            int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
+            env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, 
+                reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
+            if (env->ExceptionCheck()) {
+                throw std::runtime_error("Error setting byte array region");
+            }
+
+            env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
+            if (env->ExceptionCheck()) {
+                throw std::runtime_error("Error writing to output stream");
+            }
+            offset += chunkSize;
+        }
     }
-
-    // Get Java stream methods
-    jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
-    jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
-
-    jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
-    jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
-
-    // Read input stream into buffer
-    const int BUFFER_SIZE = 8192;
-    std::vector<uint8_t> inputBuffer;
-    jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
-
-    while (true) {
-        jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
-        if (bytesRead == -1) break;
-
-        jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
-        inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
-        env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+    catch (const std::exception& e) {
+        // Clear any pending Java exceptions
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        // Convert C++ exception to Java exception
+        jniUtil->throwJavaException(env, e.what());
     }
-
-    // Reconstruct index
-    std::vector<uint8_t> outputBuffer;
-    indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
-
-    // Write reconstructed index to output stream
-    jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
-    size_t offset = 0;
-    while (offset < outputBuffer.size()) {
-        int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
-        env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
-        env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
-        offset += chunkSize;
+    catch (...) {
+        // Clear any pending Java exceptions
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        // Handle unknown exceptions
+        jniUtil->throwJavaException(env, "Unknown error occurred during index reconstruction");
     }
 }
 
