@@ -30,10 +30,25 @@
 #include <faiss/IndexIDMap.h>
 #include <faiss/VectorTransform.h>
 
+#include <faiss/IndexFlat.h>
+#include <faiss/impl/HNSW.h>
+#include <faiss/IndexHNSW.h>
+#include <faiss/IndexIDMap.h>
+#include <faiss/index_io.h>
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <fstream>
+
 #include <algorithm>
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <memory>
+
+
+#include <stdexcept>
+#include <cstdint>
 
 // Defines type of IDSelector
 enum FilterIdsSelectorType{
@@ -215,10 +230,10 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
 
     // Build and return the index
     jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
+
     return indexPtr;
 }
 
-// JNI wrapper that handles Java stream I/O for index reconstruction process
 void knn_jni::faiss_wrapper::IndexReconstruct(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
@@ -227,45 +242,109 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
-        throw std::runtime_error("Input or output stream is null");
-    }
+    try {
+        if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
+            throw std::runtime_error("Input or output stream is null");
+        }
 
-    // Get Java stream methods
-    jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
-    jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+        // Get Java stream methods
+        jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
+        if (inputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get input stream class");
+        }
 
-    jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
-    jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+        jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+        env->DeleteLocalRef(inputStreamCls);  // Clean up class reference
+        if (readMethod == nullptr) {
+            throw std::runtime_error("Failed to get read method");
+        }
 
-    // Read input stream into buffer
-    const int BUFFER_SIZE = 8192;
-    std::vector<uint8_t> inputBuffer;
-    jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+        jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
+        if (outputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get output stream class");
+        }
 
-    while (true) {
-        jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
-        if (bytesRead == -1) break;
+        jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+        env->DeleteLocalRef(outputStreamCls);  // Clean up class reference
+        if (writeMethod == nullptr) {
+            throw std::runtime_error("Failed to get write method");
+        }
 
-        jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
-        inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
-        env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
-    }
+        // Read input stream into buffer
+        const int BUFFER_SIZE = 8192;
+        std::vector<uint8_t> inputBuffer;
+        jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaBuffer == nullptr) {
+            throw std::runtime_error("Failed to create Java buffer");
+        }
 
-    // Reconstruct index
-    std::vector<uint8_t> outputBuffer;
-    indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+        while (true) {
+            jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaBuffer);
+                throw std::runtime_error("Error reading from input stream");
+            }
+            if (bytesRead == -1) break;
 
-    // Write reconstructed index to output stream
-    jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
-    size_t offset = 0;
-    while (offset < outputBuffer.size()) {
-        int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
-        env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize, reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
-        env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
-        offset += chunkSize;
+            jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
+            if (tempBytes == nullptr) {
+                env->DeleteLocalRef(javaBuffer);
+                throw std::runtime_error("Failed to get byte array elements");
+            }
+
+            inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
+            env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+        }
+        env->DeleteLocalRef(javaBuffer);  // Clean up input buffer
+
+        // Process index reconstruction
+        faiss::VectorIOWriter tempWriter;
+        indexService->indexReconstruct(inputBuffer, indexPtr, &tempWriter);
+
+        // Write reconstructed index to output stream
+        jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaOutBuffer == nullptr) {
+            throw std::runtime_error("Failed to create output Java buffer");
+        }
+
+        // Write directly from tempWriter's data to Java output stream
+        size_t offset = 0;
+        const uint8_t* data = tempWriter.data.data();
+        size_t dataSize = tempWriter.data.size();
+
+        while (offset < dataSize) {
+            int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(dataSize - offset));
+            env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize,
+                reinterpret_cast<const jbyte*>(data + offset));
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);
+                throw std::runtime_error("Error setting byte array region");
+            }
+
+            env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);
+                throw std::runtime_error("Error writing to output stream");
+            }
+            offset += chunkSize;
+        }
+        env->DeleteLocalRef(javaOutBuffer);  // Clean up output buffer
+
+    } catch (const std::exception& e) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
+    } catch (...) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        jniUtil->ThrowJavaException(env, "RuntimeException",
+            "Unknown error occurred during index reconstruction");
     }
 }
+
+
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {
