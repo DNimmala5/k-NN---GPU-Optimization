@@ -44,10 +44,6 @@
 #include <jni.h>
 #include <string>
 #include <vector>
-
-#include <fstream>
-#include <iomanip>
-#include <faiss/index_io.h>
 #include <memory>
 
 
@@ -228,19 +224,12 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
     env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
-
-    log << "FWC - BFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
-
     // Cast the address to vector<float>* and extract raw data
     std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
     const float* inputVectors = vectorPtr->data();
 
     // Build and return the index
-    log << "FWC - BFI - before index service bfi call" << std::endl;
     jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
-    log << "FWC - BFI - after index service bfi call" << std::endl;
-    log << "FWC - BFI - Index pointer returned: 0x" << std::hex << indexPtr << std::dec << std::endl;
 
     return indexPtr;
 }
@@ -253,10 +242,6 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    std::ofstream log("vectors_analysis.log", std::ios::app);
-    log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
-    log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
-
     try {
         if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
             throw std::runtime_error("Input or output stream is null");
@@ -316,46 +301,6 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         faiss::VectorIOWriter tempWriter;
         indexService->indexReconstruct(inputBuffer, indexPtr, &tempWriter);
 
-        // Clear input buffer as it's no longer needed
-        inputBuffer.clear();
-        inputBuffer.shrink_to_fit();
-
-        // Analyze the reconstructed index
-        faiss::VectorIOReader reader;
-        reader.data = tempWriter.data;
-        std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
-
-        if (output_index) {
-            log << "Index: "
-                << "dim=" << output_index->d
-                << ", ntotal=" << output_index->ntotal
-                << ", trained=" << (output_index->is_trained ? "yes" : "no")
-                << std::endl;
-
-            if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(output_index.get())) {
-                if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(idmap->index)) {
-                    if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
-                        log << "IndexFlat: "
-                            << "dim=" << flat->d
-                            << ", ntotal=" << flat->ntotal
-                            << ", metric_type=" << (flat->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
-                            << std::endl;
-
-                        std::vector<float> vec(flat->d);
-                        for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
-                            flat->reconstruct(i, vec.data());
-                            log << "  vector[" << i << "]: [";
-                            for (int j = 0; j < flat->d; ++j) {
-                                log << std::setprecision(6) << vec[j];
-                                if (j < flat->d - 1) log << ", ";
-                            }
-                            log << "]" << std::endl;
-                        }
-                    }
-                }
-            }
-        }
-
         // Write reconstructed index to output stream
         jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
         if (javaOutBuffer == nullptr) {
@@ -385,20 +330,12 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
         env->DeleteLocalRef(javaOutBuffer);  // Clean up output buffer
 
-        log << "\n=== Index Reconstruction Analysis Complete ===\n" << std::endl;
-        log << "FAISS WRAPPER LOGGING DONE HERE" << std::endl;
-        log.flush();
-
     } catch (const std::exception& e) {
-        log << "Error: " << e.what() << std::endl;
-        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
         jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
     } catch (...) {
-        log << "Error: Unknown exception occurred" << std::endl;
-        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
