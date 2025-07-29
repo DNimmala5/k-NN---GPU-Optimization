@@ -48,6 +48,7 @@
 #include <fstream>
 #include <iomanip>
 #include <faiss/index_io.h>
+#include <memory>
 
 
 #include <stdexcept>
@@ -227,32 +228,21 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
     env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
 
+    std::ofstream log("vectors_analysis.log", std::ios::app);
+
+    log << "FWC - BFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
+
     // Cast the address to vector<float>* and extract raw data
     std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
     const float* inputVectors = vectorPtr->data();
 
     // Build and return the index
+    log << "FWC - BFI - before index service bfi call" << std::endl;
     jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
+    log << "FWC - BFI - after index service bfi call" << std::endl;
+    log << "FWC - BFI - Index pointer returned: 0x" << std::hex << indexPtr << std::dec << std::endl;
+
     return indexPtr;
-}
-
-void logIndexFlatFirst5(const faiss::IndexFlat* index, const std::string& prefix = "") {
-    std::ofstream log("index_reconstruct_debug.log", std::ios::app);
-    log << prefix << "IndexFlat: dim=" << index->d
-        << ", ntotal=" << index->ntotal
-        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP") << std::endl;
-
-    std::vector<float> vec(index->d);
-    for (faiss::idx_t i = 0; i < std::min(5, (int)index->ntotal); ++i) {
-        index->reconstruct(i, vec.data());
-        log << prefix << "  vector[" << i << "]: [";
-        for (int j = 0; j < index->d; ++j) {
-            log << std::setprecision(6) << vec[j];
-            if (j < index->d - 1) log << ", ";
-        }
-        log << "]" << std::endl;
-    }
-    log.flush();
 }
 
 void knn_jni::faiss_wrapper::IndexReconstruct(
@@ -263,8 +253,9 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    std::ofstream log("index_reconstruct_debug.log", std::ios::app);
-    log << "\n=== Starting Index Reconstruction ===" << std::endl;
+    std::ofstream log("vectors_analysis.log", std::ios::app);
+    log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
+    log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
 
     try {
         if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
@@ -278,7 +269,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
-        env->DeleteLocalRef(inputStreamCls);
+        env->DeleteLocalRef(inputStreamCls);  // Clean up class reference
         if (readMethod == nullptr) {
             throw std::runtime_error("Failed to get read method");
         }
@@ -289,7 +280,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
-        env->DeleteLocalRef(outputStreamCls);
+        env->DeleteLocalRef(outputStreamCls);  // Clean up class reference
         if (writeMethod == nullptr) {
             throw std::runtime_error("Failed to get write method");
         }
@@ -319,80 +310,50 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
             env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
         }
-        env->DeleteLocalRef(javaBuffer);
+        env->DeleteLocalRef(javaBuffer);  // Clean up input buffer
 
-        log << "Input buffer size: " << inputBuffer.size() << std::endl;
+        // Process index reconstruction
+        faiss::VectorIOWriter tempWriter;
+        indexService->indexReconstruct(inputBuffer, indexPtr, &tempWriter);
 
-        // Try to read vectors from input buffer
-        try {
-            faiss::VectorIOReader reader;
-            reader.data = inputBuffer;
-            std::unique_ptr<faiss::Index> input_index(faiss::read_index(&reader));
+        // Clear input buffer as it's no longer needed
+        inputBuffer.clear();
+        inputBuffer.shrink_to_fit();
 
-            if (input_index) {
-                log << "\nInput Index Info:" << std::endl;
-                log << "Dimension: " << input_index->d << std::endl;
-                log << "Total vectors: " << input_index->ntotal << std::endl;
-                log << "Is trained: " << (input_index->is_trained ? "yes" : "no") << std::endl;
+        // Analyze the reconstructed index
+        faiss::VectorIOReader reader;
+        reader.data = tempWriter.data;
+        std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
 
-                // Try to access vectors through proper casting
-                if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(input_index.get())) {
-                    auto base_index = idmap->index;
-                    if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index)) {
-                        if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
-                            log << "\nSuccessfully accessed input flat storage" << std::endl;
-                            logIndexFlatFirst5(flat, "Input Index: ");
-                        } else {
-                            log << "Input storage is not IndexFlat" << std::endl;
+        if (output_index) {
+            log << "Index: "
+                << "dim=" << output_index->d
+                << ", ntotal=" << output_index->ntotal
+                << ", trained=" << (output_index->is_trained ? "yes" : "no")
+                << std::endl;
+
+            if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(output_index.get())) {
+                if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(idmap->index)) {
+                    if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
+                        log << "IndexFlat: "
+                            << "dim=" << flat->d
+                            << ", ntotal=" << flat->ntotal
+                            << ", metric_type=" << (flat->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+                            << std::endl;
+
+                        std::vector<float> vec(flat->d);
+                        for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
+                            flat->reconstruct(i, vec.data());
+                            log << "  vector[" << i << "]: [";
+                            for (int j = 0; j < flat->d; ++j) {
+                                log << std::setprecision(6) << vec[j];
+                                if (j < flat->d - 1) log << ", ";
+                            }
+                            log << "]" << std::endl;
                         }
-                    } else {
-                        log << "Input base index is not HNSW" << std::endl;
                     }
-                } else {
-                    log << "Input index is not IDMap" << std::endl;
                 }
             }
-        } catch (const std::exception& e) {
-            log << "Error reading input vectors: " << e.what() << std::endl;
-        }
-
-        // Reconstruct index
-        std::vector<uint8_t> outputBuffer;
-        indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
-
-        log << "\nOutput buffer size: " << outputBuffer.size() << std::endl;
-
-        // Try to read vectors from output buffer
-        try {
-            faiss::VectorIOReader reader;
-            reader.data = outputBuffer;
-            std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
-
-            if (output_index) {
-                log << "\nOutput Index Info:" << std::endl;
-                log << "Dimension: " << output_index->d << std::endl;
-                log << "Total vectors: " << output_index->ntotal << std::endl;
-                log << "Is trained: " << (output_index->is_trained ? "yes" : "no") << std::endl;
-
-                // Try to access vectors through proper casting
-                if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(output_index.get())) {
-                    auto base_index = idmap->index;
-                    if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index)) {
-                        if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
-                            log << "\nSuccessfully accessed output flat storage" << std::endl;
-                            logIndexFlatFirst5(flat, "Output Index: ");
-                        } else {
-                            log << "Output storage is not IndexFlat" << std::endl;
-                        }
-                    } else {
-                        log << "Output base index is not HNSW" << std::endl;
-                    }
-                } else {
-                    log << "Output index is not IDMap" << std::endl;
-                }
-            }
-        } catch (const std::exception& e) {
-            log << "Error reading output vectors: " << e.what() << std::endl;
         }
 
         // Write reconstructed index to output stream
@@ -401,11 +362,15 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             throw std::runtime_error("Failed to create output Java buffer");
         }
 
+        // Write directly from tempWriter's data to Java output stream
         size_t offset = 0;
-        while (offset < outputBuffer.size()) {
-            int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(outputBuffer.size() - offset));
+        const uint8_t* data = tempWriter.data.data();
+        size_t dataSize = tempWriter.data.size();
+
+        while (offset < dataSize) {
+            int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(dataSize - offset));
             env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize,
-                reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
+                reinterpret_cast<const jbyte*>(data + offset));
             if (env->ExceptionCheck()) {
                 env->DeleteLocalRef(javaOutBuffer);
                 throw std::runtime_error("Error setting byte array region");
@@ -418,20 +383,21 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             }
             offset += chunkSize;
         }
-        env->DeleteLocalRef(javaOutBuffer);
+        env->DeleteLocalRef(javaOutBuffer);  // Clean up output buffer
 
-        log << "=== Index Reconstruction Completed ===" << std::endl;
+        log << "\n=== Index Reconstruction Analysis Complete ===\n" << std::endl;
+        log << "FAISS WRAPPER LOGGING DONE HERE" << std::endl;
         log.flush();
 
     } catch (const std::exception& e) {
-        log << "Error during reconstruction: " << e.what() << std::endl;
+        log << "Error: " << e.what() << std::endl;
         log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
         jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
     } catch (...) {
-        log << "Unknown error during reconstruction" << std::endl;
+        log << "Error: Unknown exception occurred" << std::endl;
         log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
@@ -440,6 +406,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             "Unknown error occurred during index reconstruction");
     }
 }
+
 
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
