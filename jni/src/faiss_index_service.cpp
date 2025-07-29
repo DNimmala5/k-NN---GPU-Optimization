@@ -178,8 +178,9 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
 void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         const std::vector<uint8_t>& inputBuffer,
         int64_t indexPtr,
-        std::vector<uint8_t>& outputBuffer
+        faiss::IOWriter* writer
 ) {
+
     // Deserialize index structure from input
     faiss::VectorIOReader reader;
     reader.data = inputBuffer;
@@ -187,6 +188,10 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
     if (!graph_index) {
         throw std::runtime_error("Failed to deserialize FAISS index from input buffer");
     }
+
+    reader.data.clear();
+    const_cast<std::vector<uint8_t>&>(inputBuffer).clear();
+    const_cast<std::vector<uint8_t>&>(inputBuffer).shrink_to_fit();
 
     // Validate index hierarchy (IDMap -> HNSW)
     auto* idmap = dynamic_cast<faiss::IndexIDMap*>(graph_index.get());
@@ -204,14 +209,22 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         throw std::runtime_error("Invalid IndexFlat pointer passed in");
     }
 
-    // Combine structures and serialize
+    // Log flat index info before attachment
     auto* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+
+    // Combine structures
     hnsw->storage = flat;
 
-    faiss::VectorIOWriter writer;
-    faiss::write_index(idmap, &writer);
-    outputBuffer = std::move(writer.data);
+    // Serialize
+    faiss::write_index(idmap, writer);
+
+    // Cleanup
+    delete flat;
+    flat = nullptr;
+    hnsw->storage = nullptr;
+    graph_index.reset();
 }
+
 
 void IndexService::writeIndex(
     faiss::IOWriter* writer,
