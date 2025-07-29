@@ -30,10 +30,25 @@
 #include <faiss/IndexIDMap.h>
 #include <faiss/VectorTransform.h>
 
+#include <faiss/IndexFlat.h>
+#include <faiss/impl/HNSW.h>
+#include <faiss/IndexHNSW.h>
+#include <faiss/IndexIDMap.h>
+#include <faiss/index_io.h>
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <fstream>
+
 #include <algorithm>
 #include <jni.h>
 #include <string>
 #include <vector>
+
+#include <fstream>
+#include <iomanip>
+#include <faiss/index_io.h>
+
 
 #include <stdexcept>
 #include <cstdint>
@@ -221,7 +236,25 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
-// JNI wrapper that handles Java stream I/O for index reconstruction process
+void logIndexFlatFirst5(const faiss::IndexFlat* index, const std::string& prefix = "") {
+    std::ofstream log("index_reconstruct_debug.log", std::ios::app);
+    log << prefix << "IndexFlat: dim=" << index->d
+        << ", ntotal=" << index->ntotal
+        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP") << std::endl;
+
+    std::vector<float> vec(index->d);
+    for (faiss::idx_t i = 0; i < std::min(5, (int)index->ntotal); ++i) {
+        index->reconstruct(i, vec.data());
+        log << prefix << "  vector[" << i << "]: [";
+        for (int j = 0; j < index->d; ++j) {
+            log << std::setprecision(6) << vec[j];
+            if (j < index->d - 1) log << ", ";
+        }
+        log << "]" << std::endl;
+    }
+    log.flush();
+}
+
 void knn_jni::faiss_wrapper::IndexReconstruct(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
@@ -230,6 +263,9 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
+    std::ofstream log("index_reconstruct_debug.log", std::ios::app);
+    log << "\n=== Starting Index Reconstruction ===" << std::endl;
+
     try {
         if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
             throw std::runtime_error("Input or output stream is null");
@@ -242,7 +278,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
-        env->DeleteLocalRef(inputStreamCls);  // Cleanup inputStreamCls
+        env->DeleteLocalRef(inputStreamCls);
         if (readMethod == nullptr) {
             throw std::runtime_error("Failed to get read method");
         }
@@ -253,7 +289,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
 
         jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
-        env->DeleteLocalRef(outputStreamCls);  // Cleanup outputStreamCls
+        env->DeleteLocalRef(outputStreamCls);
         if (writeMethod == nullptr) {
             throw std::runtime_error("Failed to get write method");
         }
@@ -269,25 +305,95 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         while (true) {
             jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
             if (env->ExceptionCheck()) {
-                env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer before throwing
+                env->DeleteLocalRef(javaBuffer);
                 throw std::runtime_error("Error reading from input stream");
             }
             if (bytesRead == -1) break;
 
             jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
             if (tempBytes == nullptr) {
-                env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer before throwing
+                env->DeleteLocalRef(javaBuffer);
                 throw std::runtime_error("Failed to get byte array elements");
             }
 
             inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
             env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
         }
-        env->DeleteLocalRef(javaBuffer);  // Cleanup javaBuffer after reading
+        env->DeleteLocalRef(javaBuffer);
+
+        log << "Input buffer size: " << inputBuffer.size() << std::endl;
+
+        // Try to read vectors from input buffer
+        try {
+            faiss::VectorIOReader reader;
+            reader.data = inputBuffer;
+            std::unique_ptr<faiss::Index> input_index(faiss::read_index(&reader));
+
+            if (input_index) {
+                log << "\nInput Index Info:" << std::endl;
+                log << "Dimension: " << input_index->d << std::endl;
+                log << "Total vectors: " << input_index->ntotal << std::endl;
+                log << "Is trained: " << (input_index->is_trained ? "yes" : "no") << std::endl;
+
+                // Try to access vectors through proper casting
+                if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(input_index.get())) {
+                    auto base_index = idmap->index;
+                    if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index)) {
+                        if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
+                            log << "\nSuccessfully accessed input flat storage" << std::endl;
+                            logIndexFlatFirst5(flat, "Input Index: ");
+                        } else {
+                            log << "Input storage is not IndexFlat" << std::endl;
+                        }
+                    } else {
+                        log << "Input base index is not HNSW" << std::endl;
+                    }
+                } else {
+                    log << "Input index is not IDMap" << std::endl;
+                }
+            }
+        } catch (const std::exception& e) {
+            log << "Error reading input vectors: " << e.what() << std::endl;
+        }
 
         // Reconstruct index
         std::vector<uint8_t> outputBuffer;
         indexService->indexReconstruct(inputBuffer, indexPtr, outputBuffer);
+
+        log << "\nOutput buffer size: " << outputBuffer.size() << std::endl;
+
+        // Try to read vectors from output buffer
+        try {
+            faiss::VectorIOReader reader;
+            reader.data = outputBuffer;
+            std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
+
+            if (output_index) {
+                log << "\nOutput Index Info:" << std::endl;
+                log << "Dimension: " << output_index->d << std::endl;
+                log << "Total vectors: " << output_index->ntotal << std::endl;
+                log << "Is trained: " << (output_index->is_trained ? "yes" : "no") << std::endl;
+
+                // Try to access vectors through proper casting
+                if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(output_index.get())) {
+                    auto base_index = idmap->index;
+                    if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(base_index)) {
+                        if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
+                            log << "\nSuccessfully accessed output flat storage" << std::endl;
+                            logIndexFlatFirst5(flat, "Output Index: ");
+                        } else {
+                            log << "Output storage is not IndexFlat" << std::endl;
+                        }
+                    } else {
+                        log << "Output base index is not HNSW" << std::endl;
+                    }
+                } else {
+                    log << "Output index is not IDMap" << std::endl;
+                }
+            }
+        } catch (const std::exception& e) {
+            log << "Error reading output vectors: " << e.what() << std::endl;
+        }
 
         // Write reconstructed index to output stream
         jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
@@ -301,27 +407,32 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
             env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize,
                 reinterpret_cast<const jbyte*>(outputBuffer.data() + offset));
             if (env->ExceptionCheck()) {
-                env->DeleteLocalRef(javaOutBuffer);  // Cleanup javaOutBuffer before throwing
+                env->DeleteLocalRef(javaOutBuffer);
                 throw std::runtime_error("Error setting byte array region");
             }
 
             env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
             if (env->ExceptionCheck()) {
-                env->DeleteLocalRef(javaOutBuffer);  // Cleanup javaOutBuffer before throwing
+                env->DeleteLocalRef(javaOutBuffer);
                 throw std::runtime_error("Error writing to output stream");
             }
             offset += chunkSize;
         }
-        env->DeleteLocalRef(javaOutBuffer);  // Final cleanup of javaOutBuffer
+        env->DeleteLocalRef(javaOutBuffer);
 
-    }
-    catch (const std::exception& e) {
+        log << "=== Index Reconstruction Completed ===" << std::endl;
+        log.flush();
+
+    } catch (const std::exception& e) {
+        log << "Error during reconstruction: " << e.what() << std::endl;
+        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
         jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
-    }
-    catch (...) {
+    } catch (...) {
+        log << "Unknown error during reconstruction" << std::endl;
+        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
