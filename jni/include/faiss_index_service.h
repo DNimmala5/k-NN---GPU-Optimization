@@ -85,7 +85,7 @@ public:
         virtual void indexReconstruct(
             const std::vector<uint8_t>& inputBuffer,
             int64_t indexPtr,
-            std::vector<uint8_t>& outputBuffer
+            faiss::IOWriter* writer
         );
 
     /**
