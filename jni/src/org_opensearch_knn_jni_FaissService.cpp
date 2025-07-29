@@ -20,6 +20,7 @@
 #include "jni_util.h"
 #include "faiss_stream_support.h"
 
+
 static knn_jni::JNIUtil jniUtil;
 static const jint KNN_FAISS_JNI_VERSION = JNI_VERSION_1_1;
 
@@ -118,7 +119,6 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
     try {
         std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
         knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
-
         knn_jni::faiss_wrapper::IndexReconstruct(&jniUtil, env, inputStreamJ, indexPtr, outputStreamJ, &indexService);
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
