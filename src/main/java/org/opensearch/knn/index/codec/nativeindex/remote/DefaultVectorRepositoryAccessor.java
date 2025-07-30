@@ -34,6 +34,7 @@ import java.util.function.Supplier;
 import static org.opensearch.knn.index.codec.util.KNNCodecUtil.initializeVectorValues;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
 import static org.opensearch.knn.common.KNNConstants.VECTOR_BLOB_FILE_EXTENSION;
+
 @Log4j2
 @AllArgsConstructor
 public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor {
@@ -234,7 +235,7 @@ public class DefaultVectorRepositoryAccessor implements VectorRepositoryAccessor
             System.err.println("Debug log write failed: " + e.getMessage());
         }
     }
-    
+
     @Override
     public void readFromRepository(String fileName, IndexOutputWithBuffer indexOutputWithBuffer, long indexPtr) throws IOException {
         if (StringUtils.isBlank(fileName)) {
