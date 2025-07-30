@@ -147,7 +147,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             System.err.println("Debug log write failed: " + e.getMessage());
         }
     }
-    
+
     /**
      * Entry point for flush/merge operations. This method orchestrates the following:
      *      1. Writes required data to repository
