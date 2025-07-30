@@ -20,6 +20,10 @@
 #include "jni_util.h"
 #include "faiss_stream_support.h"
 
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+
 
 static knn_jni::JNIUtil jniUtil;
 static const jint KNN_FAISS_JNI_VERSION = JNI_VERSION_1_1;
@@ -102,8 +106,10 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JN
 JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexFromNativeAddress(
     JNIEnv *env, jclass cls, jlong vectorAddress, jint numVectors, jint dimJ, jstring metricTypeJ) {
     try {
+        std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
         std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
         knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        log << "FSC - BFIFNA - Before faiss wrapper BFI call" << std::endl;
         return knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
             &jniUtil, env, vectorAddress, numVectors, dimJ, metricTypeJ, &indexService
         );
@@ -117,8 +123,10 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
 (JNIEnv * env, jclass cls, jobject inputStreamJ, jlong indexPtr, jobject outputStreamJ) {
     try {
+        std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
         std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
         knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        log << "FSC - IR - Before faiss wrapper IR call" << std::endl;
         knn_jni::faiss_wrapper::IndexReconstruct(&jniUtil, env, inputStreamJ, indexPtr, outputStreamJ, &indexService);
     } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
