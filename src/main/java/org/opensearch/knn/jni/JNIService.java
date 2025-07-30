@@ -99,7 +99,7 @@ public class JNIService {
             System.err.println("Debug log write failed: " + e.getMessage());
         }
     }
-    
+
     /**
      * Creates a flat index from vectors stored in native memory
      *
