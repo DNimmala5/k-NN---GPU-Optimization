@@ -23,6 +23,7 @@ import org.opensearch.knn.index.util.IndexUtil;
 import java.io.*;
 import java.util.Locale;
 import java.util.Map;
+import java.io.FileWriter;
 
 /**
  * Service to distribute requests to the proper engine jni service
@@ -91,6 +92,14 @@ public class JNIService {
         );
     }
 
+    private static void debugLog(String message) {
+        try (FileWriter fw = new FileWriter("/tmp/rem_ind_deb_java.log", true)) {
+            fw.write(System.currentTimeMillis() + ": " + message + "\n");
+        } catch (IOException e) {
+            System.err.println("Debug log write failed: " + e.getMessage());
+        }
+    }
+    
     /**
      * Creates a flat index from vectors stored in native memory
      *
@@ -102,6 +111,7 @@ public class JNIService {
      */
     public static long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType) {
         // Delegate to FAISS JNI service to build flat index
+        debugLog("JSJ - BFIFNA - About to call faiss service");
         return FaissService.buildFlatIndexFromNativeAddress(vectorAddress, numVectors, dimension, metricType);
     }
 
@@ -123,6 +133,8 @@ public class JNIService {
             throw new RuntimeException("Failed to create piped streams", e);
         }
 
+        debugLog("JSJ - IR - Piped streams made");
+
         // Run native reconstruction in separate thread
         Thread nativeThread = new Thread(() -> {
             FaissService.indexReconstruct(in, indexPtr, outPipe);
@@ -133,6 +145,8 @@ public class JNIService {
             }
         });
         nativeThread.start();
+
+        debugLog("JSJ - IR - faiss service index reconstruct call finished");
 
         return inPipe;
     }
