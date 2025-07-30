@@ -41,6 +41,8 @@ import java.util.Map;
 import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.io.FileWriter;
+import java.util.Arrays;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -138,6 +140,14 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         return true;
     }
 
+    private static void debugLog(String message) {
+        try (FileWriter fw = new FileWriter("/tmp/rem_ind_deb_java.log", true)) {
+            fw.write(System.currentTimeMillis() + ": " + message + "\n");
+        } catch (IOException e) {
+            System.err.println("Debug log write failed: " + e.getMessage());
+        }
+    }
+    
     /**
      * Entry point for flush/merge operations. This method orchestrates the following:
      *      1. Writes required data to repository
@@ -160,8 +170,10 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             CompletableFuture<RemoteBuildStatusResponse> remoteBuildFuture = CompletableFuture.supplyAsync(() -> {
                 try {
                     writeToRepository(repositoryContext, indexInfo);
+                    debugLog("RIBS - BAWI - data written to repository");
                     RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
                     RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
+                    debugLog("RIBS - BAWI - build submitted");
                     return awaitIndexBuild(remoteBuildResponse, indexInfo, client);
                 } catch (Exception e) {
                     log.error("Error in remote build process", e);
@@ -172,7 +184,10 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             // Parallelized task B: 3. Build flat index
             CompletableFuture<Long> indexPtrFuture = CompletableFuture.supplyAsync(() -> {
                 try {
-                    return buildFlatIndex(indexInfo);
+                    // return buildFlatIndex(indexInfo);
+                    long ptr = buildFlatIndex(indexInfo);
+                    debugLog("RIBS - BAWI - Flat index has been created, pointer is 0x" + Long.toHexString(ptr));
+                    return ptr;
                 } catch (Exception e) {
                     log.error("Error building flat index", e);
                     throw new CompletionException(e);
@@ -183,6 +198,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             CompletableFuture<Void> allDone = remoteBuildFuture.thenCombine(indexPtrFuture, (remoteBuildStatusResponse, indexPtr) -> {
                 try {
                     readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
+                    debugLog("RIBS - BAWI - all done, index reconstructed and written to output");
                     return null;
                 } catch (Exception e) {
                     log.error("Error reading from repository", e);
@@ -279,7 +295,11 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         int dimension = knnVectorValues.dimension();
         int bytesPerVector = knnVectorValues.bytesPerVector();
         KNNEngine engine = indexInfo.getKnnEngine();
-
+        int vectorCount = 0;
+        int printFrequency = 1000;
+        int vectorsToPrint = 5;
+        debugLog("RIBS - BFI - First vector: " + Arrays.toString(firstVector));
+        vectorCount++;
         // Initialize vector transfer mechanism for off-heap storage
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
             vectorDataType,
@@ -297,11 +317,26 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             float[] vector = (float[]) knnVectorValues.getVector();
             transferred = vectorTransfer.transfer(vector, false);
             batchSize++;
+            vectorCount++;
+
+            // Print 5 vectors every 1000 vectors
+            if (vectorCount % printFrequency == 0) {
+                debugLog("RIBS - BFI - Vectors at " + vectorCount + ":");
+                for (int j = 0; j < vectorsToPrint
+                    && knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS; j++) {
+                    float[] sampleVector = (float[]) knnVectorValues.getVector();
+                    debugLog("  Vector " + (vectorCount + j + 1) + ": " + Arrays.toString(sampleVector));
+                    transferred = vectorTransfer.transfer(sampleVector, false);
+                    batchSize++;
+                }
+                vectorCount += vectorsToPrint;
+            }
 
             // When batch is transferred, build index for current batch
             if (transferred) {
                 long address = vectorTransfer.getVectorAddress();
                 indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+                debugLog("RIBS - BFI - Batch transferred with " + vectorCount + " vectors and " + batchSize + " bytes (batchSize)");
                 batchSize = 0;
             }
         }
@@ -310,7 +345,10 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         if (vectorTransfer.flush(false)) {
             long address = vectorTransfer.getVectorAddress();
             indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
+            debugLog("RIBS - BFI - Batch flushed with " + vectorCount + " vectors and " + batchSize + " bytes (batchSize)");
         }
+
+        debugLog("RIBS - BFI - Vectors sent, indexPtr returned is " + "0x" + Long.toHexString(indexPtr));
 
         // Clean up resources
         vectorTransfer.close();
@@ -360,6 +398,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
                 indexInfo.getIndexOutputWithBuffer(),
                 indexPtr
             );
+            debugLog("RIBS - RFR - read from repository called with " + "0x" + Long.toHexString(indexPtr));
             success = true;
         } catch (Exception e) {
             throw new RuntimeException(String.format("Repository read failed for vector field [%s]", indexInfo.getFieldName()), e);
