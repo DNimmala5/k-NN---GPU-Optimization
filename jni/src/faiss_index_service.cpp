@@ -160,7 +160,7 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
         throw std::runtime_error("Invalid numVectors or dim");
     }
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Create appropriate index type based on metric
     faiss::IndexFlat *index = nullptr;
@@ -186,14 +186,16 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
             << std::endl;
 
         for (faiss::idx_t i = 0; i < index->ntotal; ++i) {
-            index->reconstruct(i, vec.data());
-            log << "  vector[" << i << "]: [";
-            for (int j = 0; j < index->d; ++j) {
-                log << std::setprecision(6) << vec[j];
-                if (j < index->d - 1) log << ", ";
+                if (i % 1000 == 0 || i % 1000 == 1) {  // Log 2 vectors every 1000
+                    index->reconstruct(i, vec.data());
+                    log << "  vector[" << i << "]: [";
+                    for (int j = 0; j < index->d; ++j) {
+                        log << std::setprecision(6) << vec[j];
+                        if (j < index->d - 1) log << ", ";
+                    }
+                    log << "]" << std::endl;
+                }
             }
-            log << "]" << std::endl;
-        }
         log << std::endl;
         log.flush();
 
@@ -209,7 +211,7 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         int64_t indexPtr,
         faiss::IOWriter* writer
 ) {
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
     log << "FAISS INDEX SERVICE LOGGING BEGINS HERE" << std::endl;
     log << "\n=== Index Service Processing ===\n" << std::endl;
 
@@ -259,13 +261,15 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
     // Log vectors from flat index
     std::vector<float> vec(flat->d);
     for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
-        flat->reconstruct(i, vec.data());
-        log << "  vector[" << i << "]: [";
-        for (int j = 0; j < flat->d; ++j) {
-            log << std::setprecision(6) << vec[j];
-            if (j < flat->d - 1) log << ", ";
+        if (i % 1000 == 0 || i % 1000 == 1) {  // Log 2 vectors every 1000
+            flat->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < flat->d; ++j) {
+                log << std::setprecision(6) << vec[j];
+                if (j < flat->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
         }
-        log << "]" << std::endl;
     }
 
     // Combine structures
@@ -290,13 +294,15 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
             << std::endl;
 
         for (faiss::idx_t i = 0; i < hnsw->storage->ntotal; ++i) {
-            hnsw->storage->reconstruct(i, vec.data());
-            log << "  vector[" << i << "]: [";
-            for (int j = 0; j < hnsw->storage->d; ++j) {
-                log << std::setprecision(6) << vec[j];
-                if (j < hnsw->storage->d - 1) log << ", ";
+            if (i % 1000 == 0 || i % 1000 == 1) {  // Log 2 vectors every 1000
+                hnsw->storage->reconstruct(i, vec.data());
+                log << "  vector[" << i << "]: [";
+                for (int j = 0; j < hnsw->storage->d; ++j) {
+                    log << std::setprecision(6) << vec[j];
+                    if (j < hnsw->storage->d - 1) log << ", ";
+                }
+                log << "]" << std::endl;
             }
-            log << "]" << std::endl;
         }
     } else {
         log << "ERROR: HNSW storage is null after attachment!" << std::endl;

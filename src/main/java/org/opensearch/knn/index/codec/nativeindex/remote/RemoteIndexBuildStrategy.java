@@ -141,7 +141,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     }
 
     private static void debugLog(String message) {
-        try (FileWriter fw = new FileWriter("rem_ind_deb_java.log", true)) {
+        try (FileWriter fw = new FileWriter("/tmp/rem_ind_deb_java.log", true)) {
             fw.write(System.currentTimeMillis() + ": " + message + "\n");
         } catch (IOException e) {
             System.err.println("Debug log write failed: " + e.getMessage());
@@ -295,9 +295,11 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         int dimension = knnVectorValues.dimension();
         int bytesPerVector = knnVectorValues.bytesPerVector();
         KNNEngine engine = indexInfo.getKnnEngine();
-        int i = 1;
-        debugLog("RIBS - BFI - " + i + " vector is " + Arrays.toString(firstVector));
-        i++;
+        int vectorCount = 0;
+        int printFrequency = 1000;
+        int vectorsToPrint = 5;
+        debugLog("RIBS - BFI - First vector: " + Arrays.toString(firstVector));
+        vectorCount++;
         // Initialize vector transfer mechanism for off-heap storage
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
             vectorDataType,
@@ -315,13 +317,26 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             float[] vector = (float[]) knnVectorValues.getVector();
             transferred = vectorTransfer.transfer(vector, false);
             batchSize++;
-            debugLog("RIBS - BFI - " + i + " vector is " + Arrays.toString(vector));
-            i++;
+            vectorCount++;
+
+            // Print 5 vectors every 1000 vectors
+            if (vectorCount % printFrequency == 0) {
+                debugLog("RIBS - BFI - Vectors at " + vectorCount + ":");
+                for (int j = 0; j < vectorsToPrint
+                    && knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS; j++) {
+                    float[] sampleVector = (float[]) knnVectorValues.getVector();
+                    debugLog("  Vector " + (vectorCount + j + 1) + ": " + Arrays.toString(sampleVector));
+                    transferred = vectorTransfer.transfer(sampleVector, false);
+                    batchSize++;
+                }
+                vectorCount += vectorsToPrint;
+            }
+
             // When batch is transferred, build index for current batch
             if (transferred) {
                 long address = vectorTransfer.getVectorAddress();
                 indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
-                debugLog("RIBS - BFI - Batch transferred with " + i + "vectors and " + batchSize + " bytes (batchSize)");
+                debugLog("RIBS - BFI - Batch transferred with " + vectorCount + " vectors and " + batchSize + " bytes (batchSize)");
                 batchSize = 0;
             }
         }
@@ -330,7 +345,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         if (vectorTransfer.flush(false)) {
             long address = vectorTransfer.getVectorAddress();
             indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, engine.name());
-            debugLog("RIBS - BFI - Batch flushed with " + i + "vectors");
+            debugLog("RIBS - BFI - Batch flushed with " + vectorCount + " vectors and " + batchSize + " bytes (batchSize)");
         }
 
         debugLog("RIBS - BFI - Vectors sent, indexPtr returned is " + "0x" + Long.toHexString(indexPtr));

@@ -4,5 +4,5 @@
 	branch = master
 [submodule "jni/external/faiss"]
 	path = jni/external/faiss
-	url = https://github.com/facebookresearch/faiss.git
-	branch = main
+	url = https://github.com/DNimmala5/faiss-gpu-opt.git
+	branch = kNN-side-gpu-opt

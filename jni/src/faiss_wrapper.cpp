@@ -228,7 +228,7 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
     env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     log << "FWC - BFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
 
@@ -253,7 +253,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
     log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
     log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
 
@@ -343,13 +343,15 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
 
                         std::vector<float> vec(flat->d);
                         for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
-                            flat->reconstruct(i, vec.data());
-                            log << "  vector[" << i << "]: [";
-                            for (int j = 0; j < flat->d; ++j) {
-                                log << std::setprecision(6) << vec[j];
-                                if (j < flat->d - 1) log << ", ";
+                            if (i % 1000 == 0 || i % 1000 == 1) {
+                                flat->reconstruct(i, vec.data());
+                                log << "  vector[" << i << "]: [";
+                                for (int j = 0; j < flat->d; ++j) {
+                                    log << std::setprecision(6) << vec[j];
+                                    if (j < flat->d - 1) log << ", ";
+                                }
+                                log << "]" << std::endl;
                             }
-                            log << "]" << std::endl;
                         }
                     }
                 }
