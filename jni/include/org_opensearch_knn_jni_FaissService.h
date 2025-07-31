@@ -53,13 +53,12 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JN
                                                                               jlong vectorsAddressJ, jint dimJ,
                                                                               jlong indexAddress, jint threadCount);
 
-/*
- * Class:     org_opensearch_knn_jni_FaissService
- * Method:    buildFlatIndexFromNativeAddress
- * Signature: (JIILjava/lang/String;)J
- */
-JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexFromNativeAddress
-  (JNIEnv *, jclass, jlong, jint, jint, jstring);
+
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_initFlatIndex
+  (JNIEnv *, jclass, jint, jint, jstring);
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_addVectorsToFlatIndex(
+    JNIEnv*, jclass, jlong, jlong, jint, jint);
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService
