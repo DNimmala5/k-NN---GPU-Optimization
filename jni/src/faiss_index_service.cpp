@@ -151,7 +151,7 @@ jlong IndexService::initFlatIndex(
         throw std::runtime_error("Invalid dimension");
     }
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Create appropriate index type based on metric
     faiss::IndexFlat *index = nullptr;
@@ -193,7 +193,7 @@ void IndexService::addVectorsToFlatIndex(
         throw std::runtime_error("Invalid numVectors or dim");
     }
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Cast the pointer back to IndexFlat
     faiss::IndexFlat* index = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
@@ -240,7 +240,7 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         int64_t indexPtr,
         faiss::IOWriter* writer
 ) {
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
     log << "FAISS INDEX SERVICE LOGGING BEGINS HERE" << std::endl;
     log << "\n=== Index Service Processing ===\n" << std::endl;
 

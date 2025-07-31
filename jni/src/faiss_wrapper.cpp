@@ -222,7 +222,7 @@ jlong knn_jni::faiss_wrapper::InitFlatIndex(
         throw std::runtime_error("Invalid total docs count");
     }
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Convert space type
     const char* spaceTypeC = env->GetStringUTFChars(spaceTypeJ, nullptr);
@@ -261,7 +261,7 @@ void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
         throw std::runtime_error("Invalid dimensions or number of vectors");
     }
 
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Cast the address to vector<float>* and extract raw data
     std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
@@ -309,7 +309,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    std::ofstream log("vectors_analysis.log", std::ios::app);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
     log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
     log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
 

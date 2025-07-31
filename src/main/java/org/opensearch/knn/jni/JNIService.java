@@ -93,7 +93,7 @@ public class JNIService {
     }
 
     private static void debugLog(String message) {
-        try (FileWriter fw = new FileWriter("rem_ind_deb_java.log", true)) {
+        try (FileWriter fw = new FileWriter("/tmp/rem_ind_deb_java.log", true)) {
             fw.write(System.currentTimeMillis() + ": " + message + "\n");
         } catch (IOException e) {
             System.err.println("Debug log write failed: " + e.getMessage());
