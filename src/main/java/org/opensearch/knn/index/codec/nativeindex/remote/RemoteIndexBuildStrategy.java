@@ -31,7 +31,6 @@ import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import org.opensearch.knn.jni.JNIService;
-import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
 import org.opensearch.knn.index.VectorDataType;
@@ -39,10 +38,7 @@ import org.opensearch.knn.index.VectorDataType;
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.io.FileWriter;
-import java.util.Arrays;
 
 import static org.opensearch.knn.common.KNNConstants.BUCKET;
 import static org.opensearch.knn.common.KNNConstants.DOC_ID_FILE_EXTENSION;
@@ -331,6 +327,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
         vectorTransfer.close();
         return indexPtr;
     }
+
     /**
      * Awaits the vector build to complete
      * @return RemoteBuildStatusResponse containing the completed status response from the remote service.
