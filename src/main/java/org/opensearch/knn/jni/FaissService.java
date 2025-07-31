@@ -115,6 +115,8 @@ class FaissService {
      */
     public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
 
+    public static native void addVectorsToFlatIndex(long indexPtr, long vectorAddress, int numVectors, int dimension);
+
     /**
      * Reconstructs a complete FAISS index by combining serialized index metadata with vector data.
      * @param in Input stream containing serialized index metadata
