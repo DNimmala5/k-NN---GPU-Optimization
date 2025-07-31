@@ -118,6 +118,21 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
     return (jlong)0;
 }
 
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_addVectorsToFlatIndex(
+    JNIEnv *env, jclass cls, jlong indexPtr, jlong vectorAddress, jint numVectors, jint dimJ) {
+    try {
+        std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        log << "FSC - AVTFI - Before faiss wrapper add vectors call" << std::endl;
+        knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
+            &jniUtil, env, indexPtr, vectorAddress, numVectors, dimJ, &indexService
+        );
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
 // JNI entry point for index reconstruction - creates service instance and handles Java exceptions
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
 (JNIEnv * env, jclass cls, jobject inputStreamJ, jlong indexPtr, jobject outputStreamJ) {
