@@ -120,7 +120,7 @@ public class JNIService {
         debugLog("JSJ - AVTFI - About to call faiss service");
         FaissService.addVectorsToFlatIndex(indexPtr, vectorAddress, numVectors, dimension);
     }
-    
+
     /**
      * Reconstructs a complete index by combining metadata with vector data. Uses separate thread for
      * native processing to avoid blocking.
