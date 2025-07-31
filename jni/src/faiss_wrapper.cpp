@@ -245,6 +245,38 @@ jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
     return indexPtr;
 }
 
+void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jlong indexPtr,
+    jlong vectorAddress,
+    jint numVectors,
+    jint dimJ,
+    knn_jni::faiss_wrapper::IndexService* indexService
+) {
+    // Safety checks
+    if (indexPtr <= 0) {
+        throw std::runtime_error("Index pointer cannot be null");
+    }
+    if (vectorAddress <= 0) {
+        throw std::runtime_error("Input vector address cannot be null");
+    }
+    if (dimJ <= 0 || numVectors <= 0) {
+        throw std::runtime_error("Invalid dimensions or number of vectors");
+    }
+
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+
+    // Cast the address to vector<float>* and extract raw data
+    std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
+    const float* inputVectors = vectorPtr->data();
+
+    // Add vectors to the existing index
+    log << "FWC - AVTFI - before index service add vectors call" << std::endl;
+    indexService->addVectorsToFlatIndex(indexPtr, numVectors, dimJ, inputVectors);
+    log << "FWC - AVTFI - after index service add vectors call" << std::endl;
+}
+
 void knn_jni::faiss_wrapper::IndexReconstruct(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
