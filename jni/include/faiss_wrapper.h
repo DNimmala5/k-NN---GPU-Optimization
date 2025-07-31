@@ -24,15 +24,15 @@ namespace knn_jni {
         void InsertToIndex(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jintArray idsJ, jlong vectorsAddressJ, jint dimJ, jlong indexAddr, jint threadCount, IndexService *indexService);
 
         // Build a flat index in native memory with vector data and return a pointer to the index
-        jlong BuildFlatIndexFromNativeAddress(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jlong vectorAddress, jint numVectors,
-                                                jint dimJ, jstring metricTypeJ,knn_jni::faiss_wrapper::IndexService *indexService);
+        jlong InitFlatIndex(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jint totalDocs, jint dimJ, jstring spaceTypeJ, knn_jni::faiss_wrapper::IndexService *indexService);
+
 
         void AddVectorsToFlatIndex(
             knn_jni::JNIUtilInterface* jniUtil,
             JNIEnv* env,
             jlong indexPtr,
             jlong vectorAddress,
-            jint numVectors,
+            jint batchSize,
             jint dim,
             knn_jni::faiss_wrapper::IndexService* indexService
         );

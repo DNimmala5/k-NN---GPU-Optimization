@@ -107,15 +107,14 @@ class FaissService {
 
     /**
      * Builds a flat FAISS index from vectors stored in native memory address.
-     * @param vectorAddress Address of native memory where vectors are stored
-     * @param numVectors Number of vectors to be indexed
+     * @param totalDocs Number of vectors to be indexed
      * @param dimension Dimension of each vector
-     * @param metricType Distance metric to use (L2 or Inner Product)
+     * @param spaceType Distance metric to use (L2 or Inner Product)
      * @return Address of native memory where the created flat index is stored
      */
-    public static native long buildFlatIndexFromNativeAddress(long vectorAddress, int numVectors, int dimension, String metricType);
+    public static native long initFlatIndex(int totalDocs, int dimension, String spaceType);
 
-    public static native void addVectorsToFlatIndex(long indexPtr, long vectorAddress, int numVectors, int dimension);
+    public static native void addVectorsToFlatIndex(long indexPtr, long vectorAddress, int batchSize, int dimension);
 
     /**
      * Reconstructs a complete FAISS index by combining serialized index metadata with vector data.

@@ -31,7 +31,6 @@ import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
 import org.opensearch.knn.jni.JNIService;
-import org.opensearch.knn.index.engine.KNNEngine;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
 import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
 import org.opensearch.knn.index.VectorDataType;
@@ -39,8 +38,6 @@ import org.opensearch.knn.index.VectorDataType;
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.io.FileWriter;
 import java.util.Arrays;
 
@@ -141,7 +138,7 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     }
 
     private static void debugLog(String message) {
-        try (FileWriter fw = new FileWriter("/tmp/rem_ind_deb_java.log", true)) {
+        try (FileWriter fw = new FileWriter("rem_ind_deb_java.log", true)) {
             fw.write(System.currentTimeMillis() + ": " + message + "\n");
         } catch (IOException e) {
             System.err.println("Debug log write failed: " + e.getMessage());
@@ -251,86 +248,86 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
      * @throws IllegalStateException if no vectors are available to index
      */
     private long buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
-        // Initialize vector values and metadata
+        // Initialize vectors and metadata
         KNNVectorValues<?> knnVectorValues = indexInfo.getKnnVectorValuesSupplier().get();
-        int totalDocs = indexInfo.getTotalLiveDocs();
-        VectorDataType vectorDataType = indexInfo.getVectorDataType();
-        long indexPtr = -1L;
 
         // Advance to first valid doc and validate vector existence
         if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
             throw new IllegalStateException("No vectors to index");
         }
 
-        // Extract metadata from first vector
-        float[] currentVector = (float[]) knnVectorValues.getVector();
+        // Get the first vector
+        float[] firstVector = (float[]) knnVectorValues.getVector();
         int dimension = knnVectorValues.dimension();
         int bytesPerVector = knnVectorValues.bytesPerVector();
-        String spaceType = (String) knnLibraryIndexingContext.getLibraryParameters().get("space_type");
-        int vectorCount = 0;
-        int printFrequency = 1000;
-        int batchSize = 0;
 
-        // Initialize vector transfer mechanism for off-heap storage
+        int totalDocs = indexInfo.getTotalLiveDocs();
+        VectorDataType vectorDataType = indexInfo.getVectorDataType();
+        Map<String, Object> indexParameters = indexInfo.getParameters();
+        String spaceType = (String) indexParameters.get("spaceType");
+        debugLog("Space type is " + spaceType);
+        debugLog("index parameters keys - " + indexParameters.keySet());
+        debugLog("index parameters values - " + indexParameters);
+
+        if (dimension <= 0) {
+            throw new IllegalStateException("No vectors to index (dimension is 0)");
+        }
+
+        long indexPtr = JNIService.initFlatIndex(totalDocs, dimension, spaceType);
+        debugLog("RIBS - BFI - Index initialized with pointer: 0x" + Long.toHexString(indexPtr));
+
         OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
             vectorDataType,
             bytesPerVector,
             totalDocs
         );
 
-        // Process vectors in batches
-        boolean hasMoreDocs = true;
-        while (hasMoreDocs) {
-            // Process current vector
-            // debugLog("RIBS - BFI - Processing vector " + vectorCount + ": " + Arrays.toString(currentVector));
-            boolean transferred = vectorTransfer.transfer(currentVector, false);
-            batchSize++;
-            vectorCount++;
+        // Process first vector
+        int vectorCount = 0;
+        int batchSize = 0;
+        boolean transferred = vectorTransfer.transfer(firstVector, false);
+        debugLog("Sent Vector " + vectorCount + ": " + Arrays.toString(firstVector));
+        vectorCount++;
+        batchSize++;
 
-            // When batch is transferred, build index for current batch
+        if (transferred) {
+            final long vectorAddress = vectorTransfer.getVectorAddress();
+            JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+            debugLog("RIBS - BFI - Added first batch of " + batchSize + " vectors");
+            batchSize = 0;
+        }
+
+        // Process remaining vectors
+        while (knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
+            float[] currentVector = (float[]) knnVectorValues.getVector();
+            transferred = vectorTransfer.transfer(currentVector, false);
+            debugLog("Sent Vector " + vectorCount + ": " + Arrays.toString(currentVector));
+            vectorCount++;
+            batchSize++;
+
             if (transferred) {
-                long address = vectorTransfer.getVectorAddress();
-                if (indexPtr == -1L) {
-                    indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, spaceType);
-                } else {
-                    JNIService.addVectorsToFlatIndex(indexPtr, address, batchSize, dimension);
-                }
-                debugLog("RIBS - BFI - Batch transferred with " + vectorCount + " vectors and " + (batchSize * bytesPerVector) + " bytes");
+                final long vectorAddress = vectorTransfer.getVectorAddress();
+                JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+                debugLog("RIBS - BFI - Added batch of " + batchSize + " vectors");
                 batchSize = 0;
             }
-
-            // Log sample vectors every 1000 vectors
-            if (vectorCount % printFrequency == 0) {
-                debugLog("RIBS - BFI - Milestone reached at vector " + vectorCount);
-            }
-
-            // Advance to next vector - single point of advancement
-            int nextDoc = knnVectorValues.nextDoc();
-            if (nextDoc != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
-                currentVector = (float[]) knnVectorValues.getVector();
-            } else {
-                hasMoreDocs = false;
+            if (vectorCount % 1000 == 0) {
+                debugLog("RIBS - BFI - Processed " + vectorCount + " vectors");
             }
         }
 
-        // Process any remaining vectors in the final batch
+        // Process any remaining vectors
         if (batchSize > 0 && vectorTransfer.flush(false)) {
-            long address = vectorTransfer.getVectorAddress();
-            if (indexPtr == -1L) {
-                indexPtr = JNIService.buildFlatIndexFromNativeAddress(address, batchSize, dimension, spaceType);
-            } else {
-                JNIService.addVectorsToFlatIndex(indexPtr, address, batchSize, dimension);
-            }
-            debugLog("RIBS - BFI - Final batch flushed with " + batchSize + " vectors and " + (batchSize * bytesPerVector) + " bytes");
+            final long vectorAddress = vectorTransfer.getVectorAddress();
+            JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+            debugLog("RIBS - BFI - Added final batch of " + batchSize + " vectors");
         }
 
         debugLog("RIBS - BFI - Total vectors processed: " + vectorCount);
-        debugLog("RIBS - BFI - Index pointer returned: 0x" + Long.toHexString(indexPtr));
-
-        // Clean up resources
         vectorTransfer.close();
         return indexPtr;
     }
+
     /**
      * Awaits the vector build to complete
      * @return RemoteBuildStatusResponse containing the completed status response from the remote service.

@@ -206,51 +206,47 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
 }
 
 // JNI wrapper for building a flat FAISS index from vectors in native memory. Handles conversion of Java parameters and delegates to index service.
-jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+jlong knn_jni::faiss_wrapper::InitFlatIndex(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
-    jlong vectorAddress,
-    jint numVectors,
+    jint totalDocs,
     jint dimJ,
-    jstring metricTypeJ,
+    jstring spaceTypeJ,
     knn_jni::faiss_wrapper::IndexService* indexService
 ) {
     // Safety checks
-    if (vectorAddress <= 0) {
-        throw std::runtime_error("Input vector address cannot be null");
+    if (dimJ <= 0) {
+        throw std::runtime_error("Invalid dimension");
     }
-    if (dimJ <= 0 || numVectors <= 0) {
-        throw std::runtime_error("Invalid dimensions or number of vectors");
+    if (totalDocs <= 0) {
+        throw std::runtime_error("Invalid total docs count");
     }
 
-    // Convert metric type
-    const char* metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
-    faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
-    env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
+    std::ofstream log("vectors_analysis.log", std::ios::app);
 
-    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+    // Convert space type
+    const char* spaceTypeC = env->GetStringUTFChars(spaceTypeJ, nullptr);
+    faiss::MetricType metric = (strcmp(spaceTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
+    env->ReleaseStringUTFChars(spaceTypeJ, nullptr);
 
-    log << "FWC - BFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
+    log << "FWC - IFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
 
-    // Cast the address to vector<float>* and extract raw data
-    std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
-    const float* inputVectors = vectorPtr->data();
-
-    // Build and return the index
-    log << "FWC - BFI - before index service bfi call" << std::endl;
-    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
-    log << "FWC - BFI - after index service bfi call" << std::endl;
-    log << "FWC - BFI - Index pointer returned: 0x" << std::hex << indexPtr << std::dec << std::endl;
+    // Initialize and return the index
+    log << "FWC - IFI - Before index service init call" << std::endl;
+    jlong indexPtr = indexService->initFlatIndex(dimJ, metric);
+    log << "FWC - IFI - After index service init call" << std::endl;
+    log << "FWC - IFI - Index pointer returned: 0x" << std::hex << indexPtr << std::dec << std::endl;
 
     return indexPtr;
 }
+
 
 void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
     jlong indexPtr,
     jlong vectorAddress,
-    jint numVectors,
+    jint batchSize,
     jint dimJ,
     knn_jni::faiss_wrapper::IndexService* indexService
 ) {
@@ -261,11 +257,11 @@ void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
     if (vectorAddress <= 0) {
         throw std::runtime_error("Input vector address cannot be null");
     }
-    if (dimJ <= 0 || numVectors <= 0) {
+    if (dimJ <= 0 || batchSize <= 0) {
         throw std::runtime_error("Invalid dimensions or number of vectors");
     }
 
-    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+    std::ofstream log("vectors_analysis.log", std::ios::app);
 
     // Cast the address to vector<float>* and extract raw data
     std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
@@ -273,9 +269,37 @@ void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
 
     // Add vectors to the existing index
     log << "FWC - AVTFI - before index service add vectors call" << std::endl;
-    indexService->addVectorsToFlatIndex(indexPtr, numVectors, dimJ, inputVectors);
+    indexService->addVectorsToFlatIndex(indexPtr, batchSize, dimJ, inputVectors);
+
+    // Verify vectors were added correctly by reading from index
+    faiss::IndexFlat* index = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+    log << "FWC - AVTFI - Index now contains " << index->ntotal << " total vectors" << std::endl;
+
+    // Log verification of added vectors
+        std::vector<float> vec(dimJ);
+        log << "FWC - AVTFI - Verifying vectors after add:" << std::endl;
+        log << "IndexFlat: "
+            << "dim=" << index->d
+            << ", ntotal=" << index->ntotal
+            << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+            << std::endl;
+
+        // Log all vectors from this batch
+        size_t startIdx = index->ntotal - batchSize;
+        for (faiss::idx_t i = startIdx; i < index->ntotal; i++) {
+            index->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < index->d; j++) {
+                log << std::setprecision(6) << vec[j];
+                if (j < index->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+        }
     log << "FWC - AVTFI - after index service add vectors call" << std::endl;
+    log << "----------------------------------------" << std::endl;
+    log.flush();
 }
+
 
 void knn_jni::faiss_wrapper::IndexReconstruct(
     knn_jni::JNIUtilInterface* jniUtil,
@@ -285,7 +309,7 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
-    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+    std::ofstream log("vectors_analysis.log", std::ios::app);
     log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
     log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
 
@@ -375,7 +399,6 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
 
                         std::vector<float> vec(flat->d);
                         for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
-                            if (i % 1000 == 0 || i % 1000 == 1) {
                                 flat->reconstruct(i, vec.data());
                                 log << "  vector[" << i << "]: [";
                                 for (int j = 0; j < flat->d; ++j) {
@@ -383,7 +406,6 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
                                     if (j < flat->d - 1) log << ", ";
                                 }
                                 log << "]" << std::endl;
-                            }
                         }
                     }
                 }
