@@ -115,6 +115,12 @@ public class JNIService {
         return FaissService.buildFlatIndexFromNativeAddress(vectorAddress, numVectors, dimension, metricType);
     }
 
+    public static void addVectorsToFlatIndex(long indexPtr, long vectorAddress, int numVectors, int dimension) {
+        // Delegate to FAISS JNI service
+        debugLog("JSJ - AVTFI - About to call faiss service");
+        FaissService.addVectorsToFlatIndex(indexPtr, vectorAddress, numVectors, dimension);
+    }
+    
     /**
      * Reconstructs a complete index by combining metadata with vector data. Uses separate thread for
      * native processing to avoid blocking.
