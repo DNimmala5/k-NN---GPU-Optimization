@@ -46,6 +46,10 @@
 #include <vector>
 #include <memory>
 
+#include <fstream>
+#include <iomanip>
+#include <faiss/index_io.h>
+#include <memory>
 
 #include <stdexcept>
 #include <cstdint>
@@ -202,37 +206,100 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
 }
 
 // JNI wrapper for building a flat FAISS index from vectors in native memory. Handles conversion of Java parameters and delegates to index service.
-jlong knn_jni::faiss_wrapper::BuildFlatIndexFromNativeAddress(
+jlong knn_jni::faiss_wrapper::InitFlatIndex(
     knn_jni::JNIUtilInterface* jniUtil,
     JNIEnv* env,
-    jlong vectorAddress,
-    jint numVectors,
+    jint totalDocs,
     jint dimJ,
-    jstring metricTypeJ,
+    jstring spaceTypeJ,
     knn_jni::faiss_wrapper::IndexService* indexService
 ) {
     // Safety checks
+    if (dimJ <= 0) {
+        throw std::runtime_error("Invalid dimension");
+    }
+    if (totalDocs <= 0) {
+        throw std::runtime_error("Invalid total docs count");
+    }
+
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+
+    // Convert space type
+    const char* spaceTypeC = env->GetStringUTFChars(spaceTypeJ, nullptr);
+    faiss::MetricType metric = (strcmp(spaceTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
+    env->ReleaseStringUTFChars(spaceTypeJ, nullptr);
+
+    log << "FWC - IFI - Metric type: " << (metric == faiss::METRIC_INNER_PRODUCT ? "Inner Product" : "L2") << std::endl;
+
+    // Initialize and return the index
+    log << "FWC - IFI - Before index service init call" << std::endl;
+    jlong indexPtr = indexService->initFlatIndex(dimJ, metric);
+    log << "FWC - IFI - After index service init call" << std::endl;
+    log << "FWC - IFI - Index pointer returned: 0x" << std::hex << indexPtr << std::dec << std::endl;
+
+    return indexPtr;
+}
+
+
+void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jlong indexPtr,
+    jlong vectorAddress,
+    jint batchSize,
+    jint dimJ,
+    knn_jni::faiss_wrapper::IndexService* indexService
+) {
+    // Safety checks
+    if (indexPtr <= 0) {
+        throw std::runtime_error("Index pointer cannot be null");
+    }
     if (vectorAddress <= 0) {
         throw std::runtime_error("Input vector address cannot be null");
     }
-    if (dimJ <= 0 || numVectors <= 0) {
+    if (dimJ <= 0 || batchSize <= 0) {
         throw std::runtime_error("Invalid dimensions or number of vectors");
     }
 
-    // Convert metric type
-    const char* metricTypeC = env->GetStringUTFChars(metricTypeJ, nullptr);
-    faiss::MetricType metric = (strcmp(metricTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
-    env->ReleaseStringUTFChars(metricTypeJ, metricTypeC);
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Cast the address to vector<float>* and extract raw data
     std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
     const float* inputVectors = vectorPtr->data();
 
-    // Build and return the index
-    jlong indexPtr = indexService->buildFlatIndexFromNativeAddress(numVectors, dimJ, inputVectors, metric);
+    // Add vectors to the existing index
+    log << "FWC - AVTFI - before index service add vectors call" << std::endl;
+    indexService->addVectorsToFlatIndex(indexPtr, batchSize, dimJ, inputVectors);
 
-    return indexPtr;
+    // Verify vectors were added correctly by reading from index
+    faiss::IndexFlat* index = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+    log << "FWC - AVTFI - Index now contains " << index->ntotal << " total vectors" << std::endl;
+
+    // Log verification of added vectors
+        std::vector<float> vec(dimJ);
+        log << "FWC - AVTFI - Verifying vectors after add:" << std::endl;
+        log << "IndexFlat: "
+            << "dim=" << index->d
+            << ", ntotal=" << index->ntotal
+            << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+            << std::endl;
+
+        // Log all vectors from this batch
+        size_t startIdx = index->ntotal - batchSize;
+        for (faiss::idx_t i = startIdx; i < index->ntotal; i++) {
+            index->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < index->d; j++) {
+                log << std::setprecision(6) << vec[j];
+                if (j < index->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+        }
+    log << "FWC - AVTFI - after index service add vectors call" << std::endl;
+    log << "----------------------------------------" << std::endl;
+    log.flush();
 }
+
 
 void knn_jni::faiss_wrapper::IndexReconstruct(
     knn_jni::JNIUtilInterface* jniUtil,
@@ -242,6 +309,10 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
     jobject outputStreamJ,
     IndexService* indexService
 ) {
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+    log << "FAISS WRAPPER LOGGING STARTS HERE" << std::endl;
+    log << "\n=== Starting Index Reconstruction Analysis ===\n" << std::endl;
+
     try {
         if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
             throw std::runtime_error("Input or output stream is null");
@@ -301,6 +372,46 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         faiss::VectorIOWriter tempWriter;
         indexService->indexReconstruct(inputBuffer, indexPtr, &tempWriter);
 
+        // Clear input buffer as it's no longer needed
+        inputBuffer.clear();
+        inputBuffer.shrink_to_fit();
+
+        // Analyze the reconstructed index
+        faiss::VectorIOReader reader;
+        reader.data = tempWriter.data;
+        std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
+
+        if (output_index) {
+            log << "Index: "
+                << "dim=" << output_index->d
+                << ", ntotal=" << output_index->ntotal
+                << ", trained=" << (output_index->is_trained ? "yes" : "no")
+                << std::endl;
+
+            if (auto idmap = dynamic_cast<faiss::IndexIDMap*>(output_index.get())) {
+                if (auto hnsw = dynamic_cast<faiss::IndexHNSW*>(idmap->index)) {
+                    if (auto flat = dynamic_cast<faiss::IndexFlat*>(hnsw->storage)) {
+                        log << "IndexFlat: "
+                            << "dim=" << flat->d
+                            << ", ntotal=" << flat->ntotal
+                            << ", metric_type=" << (flat->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+                            << std::endl;
+
+                        std::vector<float> vec(flat->d);
+                        for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
+                                flat->reconstruct(i, vec.data());
+                                log << "  vector[" << i << "]: [";
+                                for (int j = 0; j < flat->d; ++j) {
+                                    log << std::setprecision(6) << vec[j];
+                                    if (j < flat->d - 1) log << ", ";
+                                }
+                                log << "]" << std::endl;
+                        }
+                    }
+                }
+            }
+        }
+
         // Write reconstructed index to output stream
         jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
         if (javaOutBuffer == nullptr) {
@@ -330,12 +441,20 @@ void knn_jni::faiss_wrapper::IndexReconstruct(
         }
         env->DeleteLocalRef(javaOutBuffer);  // Clean up output buffer
 
+        log << "\n=== Index Reconstruction Analysis Complete ===\n" << std::endl;
+        log << "FAISS WRAPPER LOGGING DONE HERE" << std::endl;
+        log.flush();
+
     } catch (const std::exception& e) {
+        log << "Error: " << e.what() << std::endl;
+        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
         jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
     } catch (...) {
+        log << "Error: Unknown exception occurred" << std::endl;
+        log.flush();
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
