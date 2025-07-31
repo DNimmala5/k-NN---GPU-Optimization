@@ -23,6 +23,9 @@
 #include <memory>
 #include <type_traits>
 
+#include <fstream>
+#include <iomanip>
+
 namespace knn_jni {
 namespace faiss_wrapper {
 
@@ -139,36 +142,93 @@ void IndexService::insertToIndex(
     idMap->add_with_ids(numVectors, inputVectors->data(), ids.data());
 }
 
-/**
- * Builds a flat FAISS index (L2 or Inner Product) from vectors in native memory.
- * Returns a pointer to the created index structure.
- */
-jlong IndexService::buildFlatIndexFromNativeAddress(
-    int numVectors,
+jlong IndexService::initFlatIndex(
     int dim,
-    const float *vectors,
     faiss::MetricType metricType
 ) {
     // Validate input parameters
-    if (vectors == nullptr) {
-        throw std::runtime_error("Input vectors cannot be null");
+    if (dim <= 0) {
+        throw std::runtime_error("Invalid dimension");
     }
-    if (numVectors <= 0 || dim <= 0) {
-        throw std::runtime_error("Invalid numVectors or dim");
-    }
+
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
 
     // Create appropriate index type based on metric
     faiss::IndexFlat *index = nullptr;
     if (metricType == faiss::METRIC_INNER_PRODUCT) {
         index = new faiss::IndexFlatIP(dim);
+        log << "FISC - IFI - index type is IP" << std::endl;
     } else {
         index = new faiss::IndexFlatL2(dim);
+        log << "FISC - IFI - index type is L2" << std::endl;
+    }
+
+    log << "FISC - IFI - Index initialized" << std::endl;
+    log << "IndexFlat: "
+        << "dim=" << index->d
+        << ", ntotal=" << index->ntotal
+        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+        << std::endl;
+
+    log.flush();
+
+    return reinterpret_cast<jlong>(index);
+}
+
+
+void IndexService::addVectorsToFlatIndex(
+    jlong indexPtr,
+    int batchSize,
+    int dim,
+    const float *vectors
+) {
+    // Validate input parameters
+    if (indexPtr <= 0) {
+        throw std::runtime_error("Index pointer cannot be null");
+    }
+    if (vectors == nullptr) {
+        throw std::runtime_error("Input vectors cannot be null");
+    }
+    if (batchSize <= 0 || dim <= 0) {
+        throw std::runtime_error("Invalid numVectors or dim");
+    }
+
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+
+    // Cast the pointer back to IndexFlat
+    faiss::IndexFlat* index = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+
+    // Verify dimension matches
+    if (index->d != dim) {
+        throw std::runtime_error("Vector dimension mismatch");
     }
 
     // Add vectors to index
-    index->add(numVectors, vectors);
+    index->add(batchSize, vectors);
+    log << "FISC - AVTFI - " << batchSize << " vectors have been added to index" << std::endl;
 
-    return reinterpret_cast<jlong>(index);
+    // Log verification of added vectors
+    std::vector<float> vec(dim);
+    log << "FISC - AVTFI - Verifying vectors after add:" << std::endl;
+    log << "IndexFlat: "
+        << "dim=" << index->d
+        << ", ntotal=" << index->ntotal
+        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+        << std::endl;
+
+    // Log sample vectors
+    size_t startIdx = index->ntotal - batchSize;
+    for (faiss::idx_t i = startIdx; i < index->ntotal; i++) {
+            index->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < index->d; j++) {
+                log << std::setprecision(6) << vec[j];
+                if (j < index->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+    }
+    log << std::endl;
+    log.flush();
 }
 
 /**
@@ -180,6 +240,9 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
         int64_t indexPtr,
         faiss::IOWriter* writer
 ) {
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+    log << "FAISS INDEX SERVICE LOGGING BEGINS HERE" << std::endl;
+    log << "\n=== Index Service Processing ===\n" << std::endl;
 
     // Deserialize index structure from input
     faiss::VectorIOReader reader;
@@ -192,6 +255,13 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
     reader.data.clear();
     const_cast<std::vector<uint8_t>&>(inputBuffer).clear();
     const_cast<std::vector<uint8_t>&>(inputBuffer).shrink_to_fit();
+
+    // Log initial index info
+    log << "Initial Index: "
+        << "dim=" << graph_index->d
+        << ", ntotal=" << graph_index->ntotal
+        << ", trained=" << (graph_index->is_trained ? "yes" : "no")
+        << std::endl;
 
     // Validate index hierarchy (IDMap -> HNSW)
     auto* idmap = dynamic_cast<faiss::IndexIDMap*>(graph_index.get());
@@ -211,18 +281,72 @@ void knn_jni::faiss_wrapper::IndexService::indexReconstruct(
 
     // Log flat index info before attachment
     auto* flat = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+    log << "\nFlat Index Before Attachment: "
+        << "dim=" << flat->d
+        << ", ntotal=" << flat->ntotal
+        << ", metric_type=" << (flat->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+        << std::endl;
+
+    // Log vectors from flat index
+    std::vector<float> vec(flat->d);
+    for (faiss::idx_t i = 0; i < flat->ntotal; ++i) {
+            flat->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < flat->d; ++j) {
+                log << std::setprecision(6) << vec[j];
+                if (j < flat->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+    }
 
     // Combine structures
+    log << "\nAttaching flat storage to HNSW..." << std::endl;
     hnsw->storage = flat;
 
+    // Log combined structure info
+    log << "\nCombined Index: "
+        << "dim=" << idmap->d
+        << ", ntotal=" << idmap->ntotal
+        << ", efSearch=" << hnsw->hnsw.efSearch
+        << ", efConstruction=" << hnsw->hnsw.efConstruction
+        << std::endl;
+
+    // Log vectors after attachment
+    if (hnsw->storage) {
+        log << "\nVerifying vectors after attachment:" << std::endl;
+        log << "IndexFlat: "
+            << "dim=" << hnsw->storage->d
+            << ", ntotal=" << hnsw->storage->ntotal
+            << ", metric_type=" << (hnsw->storage->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+            << std::endl;
+
+        for (faiss::idx_t i = 0; i < hnsw->storage->ntotal; ++i) {
+                hnsw->storage->reconstruct(i, vec.data());
+                log << "  vector[" << i << "]: [";
+                for (int j = 0; j < hnsw->storage->d; ++j) {
+                    log << std::setprecision(6) << vec[j];
+                    if (j < hnsw->storage->d - 1) log << ", ";
+                }
+                log << "]" << std::endl;
+        }
+    } else {
+        log << "ERROR: HNSW storage is null after attachment!" << std::endl;
+    }
+
     // Serialize
+    log << "\nSerializing combined index..." << std::endl;
     faiss::write_index(idmap, writer);
+    log << "Serialization complete." << std::endl;
 
     // Cleanup
     delete flat;
     flat = nullptr;
     hnsw->storage = nullptr;
     graph_index.reset();
+
+    log << "\n=== Index Service Processing Complete ===\n" << std::endl;
+    log << "FAISS INDEX SERVICE LOGGING ENDS HERE" << std::endl;
+    log.flush();
 }
 
 
