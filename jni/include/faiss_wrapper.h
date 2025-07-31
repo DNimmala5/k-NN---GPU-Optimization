@@ -27,6 +27,16 @@ namespace knn_jni {
         jlong BuildFlatIndexFromNativeAddress(knn_jni::JNIUtilInterface *jniUtil, JNIEnv *env, jlong vectorAddress, jint numVectors,
                                                 jint dimJ, jstring metricTypeJ,knn_jni::faiss_wrapper::IndexService *indexService);
 
+        void AddVectorsToFlatIndex(
+            knn_jni::JNIUtilInterface* jniUtil,
+            JNIEnv* env,
+            jlong indexPtr,
+            jlong vectorAddress,
+            jint numVectors,
+            jint dim,
+            knn_jni::faiss_wrapper::IndexService* indexService
+        );
+
         // Reconstruct the complete index by attaching the flat index to the IndexHNSW that is wrapped by indexIDmap
         void IndexReconstruct(knn_jni::JNIUtilInterface* jniUtil, JNIEnv* env, jobject inputStream, jlong indexPtr,
                                 jobject outputStream, IndexService* indexService);
