@@ -63,6 +63,13 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_buildFlatIndexF
 
 /*
  * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    addVectorsToFlatIndex
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_addVectorsToFlatIndex(
+    JNIEnv*, jclass, jlong, jlong, jint, jint);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
  * Method:    indexReconstruct
  * Signature: (Ljava/io/InputStream;JLjava/io/OutputStream;)V
  */
