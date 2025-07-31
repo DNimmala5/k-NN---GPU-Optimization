@@ -202,6 +202,63 @@ jlong IndexService::buildFlatIndexFromNativeAddress(
     return reinterpret_cast<jlong>(index);
 }
 
+void IndexService::addVectorsToFlatIndex(
+    jlong indexPtr,
+    int numVectors,
+    int dim,
+    const float *vectors
+) {
+    // Validate input parameters
+    if (indexPtr <= 0) {
+        throw std::runtime_error("Index pointer cannot be null");
+    }
+    if (vectors == nullptr) {
+        throw std::runtime_error("Input vectors cannot be null");
+    }
+    if (numVectors <= 0 || dim <= 0) {
+        throw std::runtime_error("Invalid numVectors or dim");
+    }
+
+    std::ofstream log("/tmp/vectors_analysis.log", std::ios::app);
+
+    // Cast the pointer back to IndexFlat
+    faiss::IndexFlat* index = reinterpret_cast<faiss::IndexFlat*>(indexPtr);
+
+    // Verify dimension matches
+    if (index->d != dim) {
+        throw std::runtime_error("Vector dimension mismatch");
+    }
+
+    // Add vectors to index
+    index->add(numVectors, vectors);
+    log << "FISC - AVTFI - " << numVectors << " vectors have been added to index" << std::endl;
+
+    // Log verification of added vectors
+    std::vector<float> vec(dim);
+    log << "FISC - AVTFI - Verifying vectors after add:" << std::endl;
+    log << "IndexFlat: "
+        << "dim=" << index->d
+        << ", ntotal=" << index->ntotal
+        << ", metric_type=" << (index->metric_type == faiss::METRIC_L2 ? "L2" : "IP")
+        << std::endl;
+
+    // Log sample vectors
+    size_t startIdx = index->ntotal - numVectors;
+    for (faiss::idx_t i = startIdx; i < index->ntotal; i++) {
+        if ((i - startIdx) % 1000 == 0 || (i - startIdx) % 1000 == 1) {  // Log 2 vectors every 1000
+            index->reconstruct(i, vec.data());
+            log << "  vector[" << i << "]: [";
+            for (int j = 0; j < index->d; j++) {
+                log << std::setprecision(6) << vec[j];
+                if (j < index->d - 1) log << ", ";
+            }
+            log << "]" << std::endl;
+        }
+    }
+    log << std::endl;
+    log.flush();
+}
+
 /**
  * Reconstructs a complete HNSW index by combining the graph structure and ID mappings
  * from inputBuffer with vector data from a flat index. Serializes result to outputBuffer.
