@@ -75,6 +75,13 @@ public:
             faiss::MetricType metricType
         );
 
+        void addVectorsToFlatIndex(
+                jlong indexPtr,
+                int numVectors,
+                int dim,
+                const float *vectors
+            );
+
         /**
          * Reconstructs a complete index by combining the serialized indexIDmap and graph with the flat index
          * @param inputBuffer Vector of bytes containing the serialized index ID map and graph structure
