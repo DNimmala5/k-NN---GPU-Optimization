@@ -60,20 +60,19 @@ public:
      */
     virtual void insertToIndex(int dim, int numIds, int threadCount, int64_t vectorsAddress, std::vector<int64_t> &ids, jlong idMapAddress);
 
-    /**
-         * Builds a flat FAISS index from vectors stored in native memory
-         * @param numVectors The number of vectors to be indexed
-         * @param dim Dimension of each vector
-         * @param vectors Pointer to the contiguous memory block containing vector data
-         * @param metricType The distance metric type to be used (e.g., L2, Inner Product)
-         * @return jlong Pointer to the created FAISS index in native memory
-         */
-        virtual jlong buildFlatIndexFromNativeAddress(
-            int numVectors,
+
+        virtual jlong initFlatIndex(
             int dim,
-            const float *vectors,
             faiss::MetricType metricType
         );
+
+
+        void addVectorsToFlatIndex(
+                jlong indexPtr,
+                int batchSize,
+                int dim,
+                const float *vectors
+            );
 
         /**
          * Reconstructs a complete index by combining the serialized indexIDmap and graph with the flat index
