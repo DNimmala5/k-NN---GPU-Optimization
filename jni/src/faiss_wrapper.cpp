@@ -26,11 +26,26 @@
 #include "commons.h"
 #include "faiss/IndexBinaryIVF.h"
 #include "faiss/IndexBinaryHNSW.h"
+#include <faiss/IndexFlat.h>
+#include <faiss/IndexIDMap.h>
+#include <faiss/VectorTransform.h>
+
+#include <faiss/impl/HNSW.h>
+#include <faiss/IndexHNSW.h>
+#include <faiss/index_io.h>
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <fstream>
 
 #include <algorithm>
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <memory>
+
+#include <stdexcept>
+#include <cstdint>
 
 // Defines type of IDSelector
 enum FilterIdsSelectorType{
@@ -182,6 +197,185 @@ void knn_jni::faiss_wrapper::InsertToIndex(knn_jni::JNIUtilInterface * jniUtil, 
     // Create index
     indexService->insertToIndex(dim, numIds, threadCount, vectorsAddress, ids, index_ptr);
 }
+
+// JNI wrapper for initializing a flat FAISS index from vectors in native memory. Handles conversion of Java parameters and delegates to index service.
+jlong knn_jni::faiss_wrapper::InitFlatIndex(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jint totalDocs,
+    jint dimJ,
+    jstring spaceTypeJ,
+    knn_jni::faiss_wrapper::IndexService* indexService
+) {
+    // Safety checks
+    if (dimJ <= 0) {
+        throw std::runtime_error("Invalid dimension");
+    }
+    if (totalDocs <= 0) {
+        throw std::runtime_error("Invalid total docs count");
+    }
+
+    // Convert space type
+    const char* spaceTypeC = env->GetStringUTFChars(spaceTypeJ, nullptr);
+    faiss::MetricType metric = (strcmp(spaceTypeC, "IP") == 0) ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
+    env->ReleaseStringUTFChars(spaceTypeJ, nullptr);
+
+    // Initialize and return the index
+    jlong indexPtr = indexService->initFlatIndex(dimJ, metric);
+
+    return indexPtr;
+}
+
+
+void knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jlong indexPtr,
+    jlong vectorAddress,
+    jint batchSize,
+    jint dimJ,
+    knn_jni::faiss_wrapper::IndexService* indexService
+) {
+    // Safety checks
+    if (indexPtr <= 0) {
+        throw std::runtime_error("Index pointer cannot be null");
+    }
+    if (vectorAddress <= 0) {
+        throw std::runtime_error("Input vector address cannot be null");
+    }
+    if (dimJ <= 0 || batchSize <= 0) {
+        throw std::runtime_error("Invalid dimensions or number of vectors");
+    }
+
+    // Cast the address to vector<float>* and extract raw data
+    std::vector<float>* vectorPtr = reinterpret_cast<std::vector<float>*>(vectorAddress);
+    const float* inputVectors = vectorPtr->data();
+
+    // Add vectors to the existing index
+    indexService->addVectorsToFlatIndex(indexPtr, batchSize, dimJ, inputVectors);
+}
+
+void knn_jni::faiss_wrapper::IndexReconstruct(
+    knn_jni::JNIUtilInterface* jniUtil,
+    JNIEnv* env,
+    jobject inputStreamJ,
+    jlong indexPtr,
+    jobject outputStreamJ,
+    IndexService* indexService
+) {
+
+    try {
+        if (inputStreamJ == nullptr || outputStreamJ == nullptr) {
+            throw std::runtime_error("Input or output stream is null");
+        }
+
+        // Get Java stream methods
+        jclass inputStreamCls = env->GetObjectClass(inputStreamJ);
+        if (inputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get input stream class");
+        }
+
+        jmethodID readMethod = env->GetMethodID(inputStreamCls, "read", "([B)I");
+        env->DeleteLocalRef(inputStreamCls);  // Clean up class reference
+        if (readMethod == nullptr) {
+            throw std::runtime_error("Failed to get read method");
+        }
+
+        jclass outputStreamCls = env->GetObjectClass(outputStreamJ);
+        if (outputStreamCls == nullptr) {
+            throw std::runtime_error("Failed to get output stream class");
+        }
+
+        jmethodID writeMethod = env->GetMethodID(outputStreamCls, "write", "([BII)V");
+        env->DeleteLocalRef(outputStreamCls);  // Clean up class reference
+        if (writeMethod == nullptr) {
+            throw std::runtime_error("Failed to get write method");
+        }
+
+        // Read input stream into buffer
+        const int BUFFER_SIZE = 8192;
+        std::vector<uint8_t> inputBuffer;
+        jbyteArray javaBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaBuffer == nullptr) {
+            throw std::runtime_error("Failed to create Java buffer");
+        }
+
+        while (true) {
+            jint bytesRead = env->CallIntMethod(inputStreamJ, readMethod, javaBuffer);
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaBuffer);
+                throw std::runtime_error("Error reading from input stream");
+            }
+            if (bytesRead == -1) break;
+
+            jbyte* tempBytes = env->GetByteArrayElements(javaBuffer, nullptr);
+            if (tempBytes == nullptr) {
+                env->DeleteLocalRef(javaBuffer);
+                throw std::runtime_error("Failed to get byte array elements");
+            }
+
+            inputBuffer.insert(inputBuffer.end(), tempBytes, tempBytes + bytesRead);
+            env->ReleaseByteArrayElements(javaBuffer, tempBytes, JNI_ABORT);
+        }
+        env->DeleteLocalRef(javaBuffer);  // Clean up input buffer
+
+        // Process index reconstruction
+        faiss::VectorIOWriter tempWriter;
+        indexService->indexReconstruct(inputBuffer, indexPtr, &tempWriter);
+
+        // Clear input buffer as it's no longer needed
+        inputBuffer.clear();
+        inputBuffer.shrink_to_fit();
+
+        // Analyze the reconstructed index
+        faiss::VectorIOReader reader;
+        reader.data = tempWriter.data;
+        std::unique_ptr<faiss::Index> output_index(faiss::read_index(&reader));
+
+        // Write reconstructed index to output stream
+        jbyteArray javaOutBuffer = env->NewByteArray(BUFFER_SIZE);
+        if (javaOutBuffer == nullptr) {
+            throw std::runtime_error("Failed to create output Java buffer");
+        }
+
+        // Write directly from tempWriter's data to Java output stream
+        size_t offset = 0;
+        const uint8_t* data = tempWriter.data.data();
+        size_t dataSize = tempWriter.data.size();
+
+        while (offset < dataSize) {
+            int chunkSize = std::min(BUFFER_SIZE, static_cast<int>(dataSize - offset));
+            env->SetByteArrayRegion(javaOutBuffer, 0, chunkSize,
+                reinterpret_cast<const jbyte*>(data + offset));
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);
+                throw std::runtime_error("Error setting byte array region");
+            }
+
+            env->CallVoidMethod(outputStreamJ, writeMethod, javaOutBuffer, 0, chunkSize);
+            if (env->ExceptionCheck()) {
+                env->DeleteLocalRef(javaOutBuffer);
+                throw std::runtime_error("Error writing to output stream");
+            }
+            offset += chunkSize;
+        }
+        env->DeleteLocalRef(javaOutBuffer);  // Clean up output buffer
+
+    } catch (const std::exception& e) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        jniUtil->ThrowJavaException(env, "RuntimeException", e.what());
+    } catch (...) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        jniUtil->ThrowJavaException(env, "RuntimeException",
+            "Unknown error occurred during index reconstruction");
+    }
+}
+
+
 
 void knn_jni::faiss_wrapper::WriteIndex(knn_jni::JNIUtilInterface * jniUtil, JNIEnv * env,
                                         jobject output, jlong index_ptr, IndexService* indexService) {
