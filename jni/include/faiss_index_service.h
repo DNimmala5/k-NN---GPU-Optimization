@@ -61,6 +61,34 @@ public:
     virtual void insertToIndex(int dim, int numIds, int threadCount, int64_t vectorsAddress, std::vector<int64_t> &ids, jlong idMapAddress);
 
     /**
+     * Initializes a flat index
+     *
+     * @param dim dimension of vectors
+     * @param metricType type of distance metric to use
+     * @return memory address of the created flat index
+     */
+    virtual jlong initFlatIndex(int dim, faiss::MetricType metricType);
+
+    /**
+     * Adds vectors to an existing flat index
+     *
+     * @param indexPtr memory address of the flat index
+     * @param batchSize number of vectors to add
+     * @param dim dimension of vectors
+     * @param vectors pointer to the array of vector data
+     */
+    void addVectorsToFlatIndex(jlong indexPtr, int batchSize, int dim, const float *vectors);
+
+    /**
+     * Reconstructs a complete index by combining the serialized indexIDmap and graph with the flat index
+     *
+     * @param inputBuffer vector of bytes containing the serialized index ID map and graph structure
+     * @param indexPtr pointer to the native flat index in memory that contains the vector data
+     * @param writer IOWriter object that will be used to write the complete reconstructed index
+     */
+    virtual void indexReconstruct(const std::vector<uint8_t>& inputBuffer, int64_t indexPtr, faiss::IOWriter* writer);
+
+    /**
      * Write index to disk
      *
      * @param writer IOWriter implementation doing IO processing.
