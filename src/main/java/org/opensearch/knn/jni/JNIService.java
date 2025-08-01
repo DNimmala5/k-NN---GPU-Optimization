@@ -20,6 +20,7 @@ import org.opensearch.knn.index.store.IndexInputWithBuffer;
 import org.opensearch.knn.index.store.IndexOutputWithBuffer;
 import org.opensearch.knn.index.util.IndexUtil;
 
+import java.io.*;
 import java.util.Locale;
 import java.util.Map;
 
@@ -88,6 +89,62 @@ public class JNIService {
         throw new IllegalArgumentException(
             String.format(Locale.ROOT, "insertToIndex not supported for provided engine : %s", knnEngine.getName())
         );
+    }
+
+    /**
+     * Initializes the flat index
+     *
+     * @param totalDocs Number of vectors to be indexed
+     * @param dimension Dimension of each vector
+     * @param spaceType Distance metric type (L2 or Inner Product)
+     * @return Address of created flat index in native memory
+     */
+    public static long initFlatIndex(int totalDocs, int dimension, String spaceType) {
+        return FaissService.initFlatIndex(totalDocs, dimension, spaceType);
+    }
+
+    /**
+     * Adds vectors to an existing flat index
+     *
+     * @param indexPtr Address of the flat index in native memory
+     * @param vectorAddress Address of the vectors data in native memory
+     * @param batchSize Number of vectors to be added in this batch
+     * @param dimension Dimension of each vector
+     */
+    public static void addVectorsToFlatIndex(long indexPtr, long vectorAddress, int batchSize, int dimension) {
+        FaissService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+    }
+
+    /**
+     * Reconstructs a complete index by combining metadata with vector data. Uses separate thread for
+     * native processing to avoid blocking.
+     *
+     * @param in Input stream containing serialized index metadata
+     * @param indexPtr Pointer to flat index with vector data
+     * @return Input stream containing reconstructed index data
+     */
+    public static InputStream indexReconstruct(InputStream in, long indexPtr) {
+        // set up piped streams for async processing
+        final PipedOutputStream outPipe = new PipedOutputStream();
+        final PipedInputStream inPipe;
+        try {
+            inPipe = new PipedInputStream(outPipe);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create piped streams", e);
+        }
+
+        // Run native reconstruction in separate thread
+        Thread nativeThread = new Thread(() -> {
+            FaissService.indexReconstruct(in, indexPtr, outPipe);
+            try {
+                outPipe.close();
+            } catch (IOException ignored) {
+                // ignore close exception
+            }
+        });
+        nativeThread.start();
+
+        return inPipe;
     }
 
     /**
