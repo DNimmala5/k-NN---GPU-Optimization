@@ -30,6 +30,10 @@ import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
 import org.opensearch.repositories.blobstore.BlobStoreRepository;
+import org.opensearch.knn.jni.JNIService;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransfer;
+import org.opensearch.knn.index.codec.transfer.OffHeapVectorTransferFactory;
+import org.opensearch.knn.index.VectorDataType;
 
 import java.io.IOException;
 import java.util.Map;
@@ -155,11 +159,14 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
             RemoteIndexClient client = RemoteIndexClientFactory.getRemoteIndexClient(KNNSettings.getRemoteBuildServiceEndpoint());
             RemoteBuildResponse remoteBuildResponse = submitBuild(repositoryContext, indexInfo, client);
 
-            // 3. Await vector build completion
+            // 3. Build flat index in native memory, return native pointer
+            long indexPtr = buildFlatIndex(indexInfo);
+
+            // 4. Await vector build completion
             RemoteBuildStatusResponse remoteBuildStatusResponse = awaitIndexBuild(remoteBuildResponse, indexInfo, client);
 
-            // 4. Download index file and write to indexOutput
-            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse);
+            // 5. Download index, reconstruct, and send to output
+            readFromRepository(indexInfo, repositoryContext, remoteBuildStatusResponse, indexPtr);
             success = true;
             return;
         } catch (Exception e) {
@@ -219,6 +226,81 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     }
 
     /**
+     * Builds a flat index for KNN vector search using native memory
+     * @param indexInfo BuildIndexParams containing vector information and build parameters
+     * @return long pointer to the native memory where the flat index is stored
+     * @throws IOException if there are errors during vector access or index building
+     * @throws IllegalStateException if no vectors are available to index
+     */
+    private long buildFlatIndex(BuildIndexParams indexInfo) throws IOException {
+        // Initialize vectors
+        KNNVectorValues<?> knnVectorValues = indexInfo.getKnnVectorValuesSupplier().get();
+
+        // Advance to first valid doc and validate vector existence
+        if (knnVectorValues.nextDoc() == org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
+            throw new IllegalStateException("No vectors to index");
+        }
+
+        // Get the first vector, this is done because need to get first vector to get dataset parameters, with KNNVectorValues at least
+        float[] firstVector = (float[]) knnVectorValues.getVector();
+
+        // get parameters
+        int dimension = knnVectorValues.dimension();
+        int bytesPerVector = knnVectorValues.bytesPerVector();
+        int totalDocs = indexInfo.getTotalLiveDocs();
+        VectorDataType vectorDataType = indexInfo.getVectorDataType();
+        Map<String, Object> indexParameters = indexInfo.getParameters();
+        String spaceType = (String) indexParameters.get("spaceType");
+
+        if (dimension <= 0) {
+            throw new IllegalStateException("No vectors to index (dimension is 0)");
+        }
+
+        // initialize the flat index
+        long indexPtr = JNIService.initFlatIndex(totalDocs, dimension, spaceType);
+
+        OffHeapVectorTransfer<float[]> vectorTransfer = OffHeapVectorTransferFactory.getVectorTransfer(
+            vectorDataType,
+            bytesPerVector,
+            totalDocs
+        );
+
+        // Process first vector
+        int batchSize = 0;
+        boolean transferred = vectorTransfer.transfer(firstVector, false);
+
+        batchSize++;
+
+        if (transferred) {
+            final long vectorAddress = vectorTransfer.getVectorAddress();
+            JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+            batchSize = 0;
+        }
+
+        // Process remaining vectors
+        while (knnVectorValues.nextDoc() != org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS) {
+            float[] currentVector = (float[]) knnVectorValues.getVector();
+            transferred = vectorTransfer.transfer(currentVector, false);
+            batchSize++;
+
+            if (transferred) {
+                final long vectorAddress = vectorTransfer.getVectorAddress();
+                JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+                batchSize = 0;
+            }
+        }
+
+        // Process any remaining vectors
+        if (batchSize > 0 && vectorTransfer.flush(false)) {
+            final long vectorAddress = vectorTransfer.getVectorAddress();
+            JNIService.addVectorsToFlatIndex(indexPtr, vectorAddress, batchSize, dimension);
+        }
+
+        vectorTransfer.close();
+        return indexPtr;
+    }
+
+    /**
      * Awaits the vector build to complete
      * @return RemoteBuildStatusResponse containing the completed status response from the remote service.
      * This will only be returned with a COMPLETED_INDEX_BUILD status, otherwise the method will throw an exception.
@@ -250,14 +332,16 @@ public class RemoteIndexBuildStrategy implements NativeIndexBuildStrategy {
     private void readFromRepository(
         BuildIndexParams indexInfo,
         RepositoryContext repositoryContext,
-        RemoteBuildStatusResponse remoteBuildStatusResponse
+        RemoteBuildStatusResponse remoteBuildStatusResponse,
+        long indexPtr
     ) {
         metrics.startRepositoryReadMetrics();
         boolean success = false;
         try {
             repositoryContext.vectorRepositoryAccessor.readFromRepository(
                 remoteBuildStatusResponse.getFileName(),
-                indexInfo.getIndexOutputWithBuffer()
+                indexInfo.getIndexOutputWithBuffer(),
+                indexPtr
             );
             success = true;
         } catch (Exception e) {
