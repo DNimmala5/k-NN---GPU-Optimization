@@ -14,10 +14,16 @@
 #include <jni.h>
 
 #include <vector>
+#include <algorithm>
 
 #include "faiss_wrapper.h"
 #include "jni_util.h"
 #include "faiss_stream_support.h"
+
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+
 
 static knn_jni::JNIUtil jniUtil;
 static const jint KNN_FAISS_JNI_VERSION = JNI_VERSION_1_1;
@@ -92,6 +98,44 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JN
         knn_jni::faiss_wrapper::InsertToIndex(&jniUtil, env, idsJ, vectorsAddressJ, dimJ, indexAddress, threadCount, &indexService);
     } catch (...) {
         // NOTE: ADDING DELETE STATEMENT HERE CAUSES A CRASH!
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_initFlatIndex(
+    JNIEnv *env, jclass cls, jint totalDocs, jint dimJ, jstring spaceTypeJ) {
+    try {
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        return knn_jni::faiss_wrapper::InitFlatIndex(
+            &jniUtil, env, totalDocs, dimJ, spaceTypeJ, &indexService
+        );
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+    return (jlong)0;
+}
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_addVectorsToFlatIndex(
+    JNIEnv *env, jclass cls, jlong indexPtr, jlong vectorAddress, jint batchSize, jint dimJ) {
+    try {
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        knn_jni::faiss_wrapper::AddVectorsToFlatIndex(
+            &jniUtil, env, indexPtr, vectorAddress, batchSize, dimJ, &indexService
+        );
+    } catch (...) {
+        jniUtil.CatchCppExceptionAndThrowJava(env);
+    }
+}
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
+(JNIEnv * env, jclass cls, jobject inputStreamJ, jlong indexPtr, jobject outputStreamJ) {
+    try {
+        std::unique_ptr<knn_jni::faiss_wrapper::FaissMethods> faissMethods(new knn_jni::faiss_wrapper::FaissMethods());
+        knn_jni::faiss_wrapper::IndexService indexService(std::move(faissMethods));
+        knn_jni::faiss_wrapper::IndexReconstruct(&jniUtil, env, inputStreamJ, indexPtr, outputStreamJ, &indexService);
+    } catch (...) {
         jniUtil.CatchCppExceptionAndThrowJava(env);
     }
 }
