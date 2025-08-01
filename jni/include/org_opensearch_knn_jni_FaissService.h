@@ -52,6 +52,31 @@ JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_initByteIndex(J
 JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_insertToIndex(JNIEnv * env, jclass cls, jintArray idsJ,
                                                                               jlong vectorsAddressJ, jint dimJ,
                                                                               jlong indexAddress, jint threadCount);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    initFlatIndex
+ * Signature: (IILjava/lang/String;)J
+ */
+JNIEXPORT jlong JNICALL Java_org_opensearch_knn_jni_FaissService_initFlatIndex
+  (JNIEnv *, jclass, jint, jint, jstring);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    addVectorsToFlatIndex
+ * Signature: (JJII)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_addVectorsToFlatIndex(
+    JNIEnv*, jclass, jlong, jlong, jint, jint);
+
+/*
+ * Class:     org_opensearch_knn_jni_FaissService
+ * Method:    indexReconstruct
+ * Signature: (Ljava/io/InputStream;JLjava/io/OutputStream;)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_jni_FaissService_indexReconstruct
+  (JNIEnv *, jclass, jobject inputStream, jlong indexPtr, jobject outputStream);
+
 /*
  * Class:     org_opensearch_knn_jni_FaissService
  * Method:    insertToBinaryIndex
